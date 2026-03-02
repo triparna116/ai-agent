@@ -1,0 +1,19 @@
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# build and cache
+dist/
+.cache/
+
+# uploads and local data
+server/uploads/
+server/db.json
+
+# env and logs
+.env
+*.log
+
+# misc
+.DS_Store
+Thumbs.db
