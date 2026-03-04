@@ -5,8 +5,8 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js"
+    "dev": "node src/start.js",
+    "start": "node src/start.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -15,6 +15,7 @@
     "bcryptjs": "^2.4.3",
     "lowdb": "^7.0.1",
     "multer": "^1.4.5-lts.1",
-    "tesseract.js": "^5.1.0"
+    "tesseract.js": "^5.1.0",
+    "swagger-ui-express": "^5.0.0"
   }
 }

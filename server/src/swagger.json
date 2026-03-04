@@ -1,0 +1,17 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Menu OCR API", "version": "1.0.0" },
+  "paths": {
+    "/api/health": { "get": { "responses": { "200": { "description": "ok" } } } },
+    "/api/auth/register": { "post": { "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "username": { "type": "string" }, "password": { "type": "string" } }, "required": ["username","password"] } } } }, "responses": { "200": { "description": "user created" } } } },
+    "/api/auth/login": { "post": { "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "username": { "type": "string" }, "password": { "type": "string" } }, "required": ["username","password"] } } } }, "responses": { "200": { "description": "jwt token" } } } },
+    "/api/restaurants": { "get": { "responses": { "200": { "description": "list" } } }, "post": { "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] } } } }, "responses": { "200": { "description": "created" } } } },
+    "/api/restaurants/{id}/menu": { "get": { "parameters": [{ "in": "path", "name": "id", "schema": { "type": "integer" }, "required": true }], "responses": { "200": { "description": "menu" } } } },
+    "/api/restaurants/{id}/menu/{menuId}": { "put": { "security": [{ "bearerAuth": [] }], "parameters": [{ "in": "path", "name": "id", "schema": { "type": "integer" }, "required": true }, { "in": "path", "name": "menuId", "schema": { "type": "number" }, "required": true }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] } } } }, "responses": { "200": { "description": "updated" } } } },
+    "/api/restaurants/{id}/upload": { "post": { "security": [{ "bearerAuth": [] }], "parameters": [{ "in": "path", "name": "id", "schema": { "type": "integer" }, "required": true }], "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "properties": { "image": { "type": "string", "format": "binary" } }, "required": ["image"] } } } }, "responses": { "200": { "description": "ocr result" } } } },
+    "/api/search": { "get": { "parameters": [{ "in": "query", "name": "query", "schema": { "type": "string" } }], "responses": { "200": { "description": "results" } } } }
+  },
+  "components": {
+    "securitySchemes": { "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" } }
+  }
+}
