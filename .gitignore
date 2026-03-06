@@ -8,7 +8,9 @@ dist/
 
 # uploads and local data
 server/uploads/
+server/src/uploads/
 server/db.json
+server/src/db.json
 
 # env and logs
 .env
