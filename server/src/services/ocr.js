@@ -19,12 +19,17 @@ export async function recognizeImage(filePath) {
 
 export async function extractStructuredMenuFromImage(imagePath) {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) {
-    console.log("[GEMINI] Missing API key.");
+
+  if (!apiKey.startsWith("AIza")) {
+    console.log("**************************************************");
+    console.log("[GEMINI] CRITICAL WARNING: Your API Key does NOT look like a real Gemini key.");
+    console.log(`[GEMINI] Key starts with: "${apiKey.substring(0, 8)}..."`);
+    console.log("[GEMINI] A real key must start with 'AIza'. Did you paste the NAME of the key by mistake?");
+    console.log("**************************************************");
     return null;
   }
 
-  console.log(`[GEMINI] Using API Key starting with: ${apiKey.substring(0, 4)}...`);
+  console.log(`[GEMINI] API Key looks valid (starts with ${apiKey.substring(0, 4)}). Waking up AI...`);
 
   const genAI = new GoogleGenerativeAI(apiKey);
 
@@ -143,7 +148,7 @@ export function parseMenuTextToItems(text) {
       items.push({
         name,
         price,
-        description: "AI Extraction Pending (Auto-Parsed)"
+        description: "AI Offline (Check API Key in Render Logs)"
       });
     }
   }
