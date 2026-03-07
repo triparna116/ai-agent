@@ -74,9 +74,35 @@ export async function extractStructuredMenuFromImage(imagePath) {
         }
       }
     } catch (err) {
-      console.log(`[GEMINI] ${config.model} failed: ${err.message}`);
-      // Log the first part of the stack for deep debugging if available
-      if (err.stack) console.log(err.stack.split('\n')[0]);
+      console.log(`[GEMINI] ${config.model} Library Failure: ${err.message}`);
+
+      // Fallback: Direct REST call (sometimes works when library fails)
+      try {
+        console.log(`[GEMINI] Attempting Direct REST Fallback for ${config.model}...`);
+        const url = `https://generativelanguage.googleapis.com/${config.version}/models/${config.model}:generateContent?key=${apiKey}`;
+        const restBody = {
+          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: data } }] }]
+        };
+        const restRes = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(restBody)
+        });
+
+        if (restRes.ok) {
+          const restData = await restRes.json();
+          const restText = restData.candidates?.[0]?.content?.parts?.[0]?.text;
+          const restJsonMatch = restText?.match(/\[[\s\S]*\]/);
+          if (restJsonMatch) {
+            console.log(`[GEMINI] REST SUCCESS with ${config.model}!`);
+            return JSON.parse(restJsonMatch[0]);
+          }
+        } else {
+          console.log(`[GEMINI] REST Failure: ${restRes.status} ${restRes.statusText}`);
+        }
+      } catch (restErr) {
+        console.log(`[GEMINI] REST Critical Error: ${restErr.message}`);
+      }
     }
   }
   return null;
