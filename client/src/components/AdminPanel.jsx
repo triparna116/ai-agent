@@ -41,9 +41,24 @@ export default function AdminPanel() {
   }
 
   function onEdit(id) {
-    const newName = window.prompt("Edit dish name", menuItems.find((m) => m.id === id)?.name || "");
-    if (!newName) return;
-    dispatch(updateMenuItem({ token, id: selectedId, menuId: id, name: newName }));
+    const item = menuItems.find((m) => m.id === id);
+    if (!item) return;
+    const newName = window.prompt("Edit dish name", item.name || "");
+    const newPrice = window.prompt("Edit price", item.price || "");
+    const newDesc = window.prompt("Edit description", item.description || "");
+
+    if (newName === null && newPrice === null && newDesc === null) return;
+
+    dispatch(updateMenuItem({
+      token,
+      id: selectedId,
+      menuId: id,
+      updates: {
+        name: newName ?? item.name,
+        price: newPrice ?? item.price,
+        description: newDesc ?? item.description
+      }
+    }));
   }
 
   return (
@@ -76,17 +91,33 @@ export default function AdminPanel() {
       )}
       {lastPreview.length > 0 && (
         <div className="extracted">
-          <div className="extracted-title">Extracted Items (preview)</div>
-          <ul>{lastPreview.map((it, i) => <li key={i}>{it}</li>)}</ul>
+          <div className="extracted-title">Extracted Items (AI Preview)</div>
+          <ul style={{ listStyle: 'none', padding: 0 }}>
+            {lastPreview.map((it, i) => (
+              <li key={i} style={{ marginBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: 8 }}>
+                <strong>{it.name}</strong> - <span style={{ color: '#10b981' }}>{it.price || 'N/A'}</span>
+                {it.description && <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', opacity: 0.7 }}>{it.description}</p>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {menuItems.length > 0 && (
         <div className="results" style={{ marginTop: 8 }}>
           <div className="result">
             <h3>Menu Items</h3>
-            <ul>
+            <ul style={{ listStyle: 'none', padding: 0 }}>
               {menuItems.map((m) => (
-                <li key={m.id}>{m.name} <button onClick={() => onEdit(m.id)} style={{ marginLeft: 8 }}>Edit</button></li>
+                <li key={m.id} style={{ marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                    <div>
+                      <strong>{m.name}</strong>
+                      <div style={{ color: '#10b981', fontWeight: 600 }}>{m.price || 'N/A'}</div>
+                    </div>
+                    <button onClick={() => onEdit(m.id)} style={{ margin: 0, padding: '4px 8px', fontSize: '0.8rem' }}>Edit</button>
+                  </div>
+                  {m.description && <p style={{ margin: '8px 0 0 0', fontSize: '0.9rem', opacity: 0.7 }}>{m.description}</p>}
+                </li>
               ))}
             </ul>
           </div>

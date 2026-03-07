@@ -48,11 +48,11 @@ export async function apiUploadImage(token, id, file) {
   return r.json().then((j) => ({ ok: r.ok, data: j }));
 }
 
-export async function apiUpdateMenuItem(token, id, menuId, name) {
+export async function apiUpdateMenuItem(token, id, menuId, updates) {
   const r = await fetch(`${BASE}/api/restaurants/${id}/menu/${menuId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(updates),
   });
   return r.json().then((j) => ({ ok: r.ok, data: j }));
 }

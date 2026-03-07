@@ -1,13 +1,58 @@
 import Tesseract from "tesseract.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function recognizeImage(path) {
   const result = await Tesseract.recognize(path, "eng", {
-    logger: () => {},
+    logger: () => { },
     tessedit_char_whitelist: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -'&().",
     psm: 6,
     preserve_interword_spaces: "1",
   });
   return result.data.text || "";
+}
+
+export async function extractStructuredMenuWithLLM(rawText) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error("GEMINI_API_KEY is not set. Falling back to simple parsing.");
+    return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+  const prompt = `
+    You are an expert menu analyzer. I will provide you with messy OCR text from a restaurant menu.
+    Please extract a clean list of dishes. For each dish, provide:
+    1. The name of the dish.
+    2. The price (if available, otherwise empty string).
+    3. A brief description (if available, otherwise empty string).
+
+    Return ONLY a valid JSON array of objects. Do not include any markdown or extra text.
+    Example format:
+    [
+      {"name": "Margherita Pizza", "price": "$12.00", "description": "Tomato sauce, mozzarella, basil"},
+      {"name": "Burger", "price": "$10.50", "description": "Beef patty with cheese and lettuce"}
+    ]
+
+    Messy OCR text:
+    ${rawText}
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Clean potential markdown code blocks from response
+    const jsonString = text.replace(/```json|```/g, "").trim();
+    const items = JSON.parse(jsonString);
+
+    return Array.isArray(items) ? items : [];
+  } catch (error) {
+    console.error("LLM Extraction failed:", error);
+    return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
+  }
 }
 
 export function parseMenuTextToItems(text) {

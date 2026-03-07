@@ -8,6 +8,8 @@ export function search(req, res) {
     restaurantName: db.data.restaurants.find((r) => r.id === mi.restaurant_id)?.name || "",
     itemName: mi.name,
     name: mi.name,
+    price: mi.price || "",
+    description: mi.description || "",
     restaurant_id: mi.restaurant_id,
   }));
   const matched = fuzzySearch(rows, q);
@@ -18,7 +20,11 @@ export function search(req, res) {
   const grouped = {};
   for (const row of matched) {
     if (!grouped[row.restaurantName]) grouped[row.restaurantName] = [];
-    grouped[row.restaurantName].push(row.itemName);
+    grouped[row.restaurantName].push({
+      name: row.itemName,
+      price: row.price,
+      description: row.description
+    });
   }
   const results = Object.entries(grouped).map(([restaurantName, items]) => ({
     restaurantName,

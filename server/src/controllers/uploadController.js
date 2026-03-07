@@ -4,7 +4,7 @@ import multer from "multer";
 import { fileURLToPath } from "url";
 import { addImage, findRestaurantById } from "../repositories/restaurants.js";
 import { addIfNotExistsMany } from "../repositories/menuItems.js";
-import { recognizeImage, parseMenuTextToItems } from "../services/ocr.js";
+import { recognizeImage, extractStructuredMenuWithLLM } from "../services/ocr.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,9 +43,9 @@ export async function uploadAndOcr(req, res) {
     } catch {
       return res.status(422).json({ error: "ocr_failed" });
     }
-    const items = parseMenuTextToItems(text);
+    const items = await extractStructuredMenuWithLLM(text);
     const added = await addIfNotExistsMany(id, items, text);
-    res.json({ imageUrl: url, added, extracted: items.length, itemsPreview: items.slice(0, 50) });
+    res.json({ imageUrl: url, added, extracted: items.length, itemsPreview: items });
   } catch {
     res.status(500).json({ error: "upload_failed" });
   }

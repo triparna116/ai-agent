@@ -12,8 +12,8 @@ export const uploadImage = createAsyncThunk("menu/upload", async ({ token, id, f
   return data;
 });
 
-export const updateMenuItem = createAsyncThunk("menu/updateItem", async ({ token, id, menuId, name }) => {
-  const { ok, data } = await apiUpdateMenuItem(token, id, menuId, name);
+export const updateMenuItem = createAsyncThunk("menu/updateItem", async ({ token, id, menuId, updates }) => {
+  const { ok, data } = await apiUpdateMenuItem(token, id, menuId, updates);
   if (!ok) throw new Error(data.error || "Failed");
   return data.item;
 });
