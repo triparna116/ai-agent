@@ -100,27 +100,33 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
   return parseMenuTextToItems(rawText);
 }
 
-/**
- * Highly selective fallback parser. 
- * Filters out garbage headers and common OCR noise.
- */
 export function parseMenuTextToItems(text) {
   if (!text) return [];
   const lines = text.split(/\n/);
   const items = [];
 
-  const HEADER_WORDS = /menu|restaurant|food|card|today|special|welcome|phone|mobile|address|email|price|list|item/i;
-  const NOISE_WORDS = /boda|jes|mn|iy|raa|os|fr|ng|dpe|ay|ze|pa|sr|tt/i;
+  // Words that indicate a header or meta-information rather than a dish
+  const HEADER_WORDS = /menu|restaurant|food|card|today|special|welcome|phone|mobile|address|email|price|list|item|opening|hours|since|established|visit|website/i;
+  // Garbage OCR patterns (mostly single letters or nonsense)
+  const NOISE_WORDS = /\b(boda|jes|mn|iy|raa|os|fr|ng|dpe|ay|ze|pa|sr|tt|ii|ll|oo)\b/i;
 
   for (let line of lines) {
     line = line.trim().replace(/[|_~`^<>\\]+/g, "").replace(/\s+/g, " ");
-    if (line.length < 5) continue;
 
-    // Filter out common header or garbage noise lines
+    // Skip very short lines
+    if (line.length < 4) continue;
+
+    // Skip obvious headers (unless they are long enough to be a dish)
     if (HEADER_WORDS.test(line) && line.split(" ").length < 4) continue;
-    if (NOISE_WORDS.test(line) && line.length < 10) continue;
 
-    // Find Price
+    // Skip nonsense OCR noise
+    if (NOISE_WORDS.test(line) && line.length < 15) continue;
+
+    // Skip lines with too many special characters
+    const alphaCount = (line.match(/[a-zA-Z]/g) || []).length;
+    if (alphaCount / line.length < 0.4) continue;
+
+    // Find Price patterns
     const priceMatch = line.match(/([₹$]|Rs\.?)\s?(\d+)|(\d+)\s?(\/\-)/i);
     let name = line;
     let price = "—";
@@ -130,17 +136,19 @@ export function parseMenuTextToItems(text) {
       name = line.replace(priceMatch[0], "").trim();
     }
 
+    // Clean up the name
     name = name.replace(/[^\w\s'&().-]/g, " ").replace(/\s+/g, " ").trim();
 
-    if (name.length > 4 && !HEADER_WORDS.test(name)) {
+    if (name.length > 5 && !HEADER_WORDS.test(name)) {
       items.push({
         name,
         price,
-        description: "AI Unavailable (Auto-Extracted)"
+        description: "AI Extraction Pending (Auto-Parsed)"
       });
     }
   }
-  return items.slice(0, 30);
+  // Return the best 40 items
+  return items.slice(0, 40);
 }
 
 export function fuzzySearch(rows, q) {
