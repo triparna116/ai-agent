@@ -17,41 +17,70 @@ export async function recognizeImage(filePath) {
   }
 }
 
+/**
+ * Direct fetch check to see if we can even talk to Google's API
+ */
+async function checkApiHealth(apiKey) {
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
+    if (r.ok) {
+      const data = await r.json();
+      console.log(`[GEMINI] API Health OK. Found ${data.models?.length} models.`);
+      return true;
+    }
+    console.log(`[GEMINI] API Health Check Failed: ${r.status} ${r.statusText}`);
+    return false;
+  } catch (e) {
+    console.error("[GEMINI] Network Error during Health Check:", e.message);
+    return false;
+  }
+}
+
 export async function extractStructuredMenuFromImage(imagePath) {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) return null;
+
+  // Run a quick health check once in logs
+  await checkApiHealth(apiKey);
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  // Try stable v1 FIRST, then v1beta. Try 1.5-flash then 1.5-pro
+  const configs = [
+    { model: "gemini-1.5-flash", version: "v1" },
+    { model: "gemini-1.5-flash", version: "v1beta" },
+    { model: "gemini-1.5-flash-latest", version: "v1beta" },
+    { model: "gemini-1.5-pro", version: "v1" }
+  ];
 
   const data = fs.readFileSync(imagePath);
   const ext = path.extname(imagePath).toLowerCase();
   const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
   const imagePart = { inlineData: { data: data.toString("base64"), mimeType } };
-  const prompt = "EXTRACT MENU ITEMS. Return a JSON array of objects with 'name', 'price', and 'description'. Output ONLY JSON.";
-
-  // Versions and models to try in sequence to fix 404 errors
-  const configs = [
-    { model: "gemini-1.5-flash", version: "v1beta" },
-    { model: "gemini-1.5-flash", version: "v1" },
-    { model: "gemini-1.5-flash-latest", version: "v1beta" },
-    { model: "gemini-pro-vision", version: "v1beta" },
-    { model: "gemini-1.5-pro", version: "v1beta" }
-  ];
 
   for (const config of configs) {
     try {
-      console.log(`[GEMINI] Trying Vision: ${config.model} (${config.version})...`);
-      const genAI = new GoogleGenerativeAI(apiKey);
+      console.log(`[GEMINI] Attempting Vision: ${config.model} (${config.version})...`);
       const model = genAI.getGenerativeModel({ model: config.model }, { apiVersion: config.version });
 
+      const prompt = `
+        You are an AI Menu Digitizer. Analyze this image.
+        Extract every food/drink item into a clean JSON array of objects.
+        Required fields: "name", "price", "description" (optional, use "" if missing).
+        Return ONLY valid JSON. Keep dish names clean and professional.
+      `;
+
       const result = await model.generateContent([prompt, imagePart]);
-      const text = result.response.text();
+      const res = await result.response;
+      const text = res.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (!jsonMatch) continue;
 
       const items = JSON.parse(jsonMatch[0]);
-      console.log(`[GEMINI] SUCCESS with ${config.model}!`);
+      console.log(`[GEMINI] SUCCESS! Extracted ${items.length} items using ${config.model}.`);
       return items;
     } catch (err) {
-      console.log(`[GEMINI] Vision ${config.model} (${config.version}) failed: ${err.message}`);
+      console.log(`[GEMINI] ${config.model} (${config.version}) failed: ${err.message}`);
     }
   }
   return null;
@@ -64,33 +93,38 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
   }
 
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  const models = ["gemini-1.5-flash", "gemini-pro"];
-  const versions = ["v1beta", "v1"];
+  if (!apiKey) {
+    return parseMenuTextToItems(rawText).map(n => ({ name: n, price: "—", description: "API Key Not Set" }));
+  }
 
-  for (const version of versions) {
-    for (const modelName of models) {
-      try {
-        console.log(`[GEMINI] Trying Text: ${modelName} (${version})...`);
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: modelName }, { apiVersion: version });
-        const prompt = `Convert this OCR into JSON menu: ${rawText}`;
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) return JSON.parse(jsonMatch[0]);
-      } catch (err) {
-        console.log(`[GEMINI] Text ${modelName} (${version}) failed: ${err.message}`);
-      }
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const configs = [
+    { model: "gemini-1.5-flash", version: "v1" },
+    { model: "gemini-1.0-pro", version: "v1" }
+  ];
+
+  for (const config of configs) {
+    try {
+      console.log(`[GEMINI] Trying Text: ${config.model} (${config.version})...`);
+      const model = genAI.getGenerativeModel({ model: config.model }, { apiVersion: config.version });
+      const prompt = `Extract menu names, prices, and descriptions as JSON from this text: ${rawText}`;
+      const result = await model.generateContent(prompt);
+      const res = await result.response;
+      const text = res.text();
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    } catch (err) {
+      console.log(`[GEMINI] Text ${config.model} failed: ${err.message}`);
     }
   }
 
-  return parseMenuTextToItems(rawText).map(name => ({ name, price: "—", description: "AI Error" }));
+  return parseMenuTextToItems(rawText).map(name => ({ name, price: "—", description: "AI Busy/Error" }));
 }
 
 export function parseMenuTextToItems(text) {
   if (!text) return [];
   return text.split("\n")
-    .map(l => l.trim().replace(/[|_~`^<>\\]+/g, ""))
+    .map(l => l.trim().replace(/[|_~`^<>\\]+/g, "").replace(/\s+/g, " "))
     .filter(l => l.length > 3)
     .slice(0, 30);
 }
