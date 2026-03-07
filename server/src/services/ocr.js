@@ -21,32 +21,37 @@ export async function extractStructuredMenuFromImage(imagePath) {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) return null;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"];
+  const data = fs.readFileSync(imagePath);
+  const ext = path.extname(imagePath).toLowerCase();
+  const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+  const imagePart = { inlineData: { data: data.toString("base64"), mimeType } };
+  const prompt = "EXTRACT MENU ITEMS. Return a JSON array of objects with 'name', 'price', and 'description'. Output ONLY JSON.";
 
-  for (const modelName of modelsToTry) {
+  // Versions and models to try in sequence to fix 404 errors
+  const configs = [
+    { model: "gemini-1.5-flash", version: "v1beta" },
+    { model: "gemini-1.5-flash", version: "v1" },
+    { model: "gemini-1.5-flash-latest", version: "v1beta" },
+    { model: "gemini-pro-vision", version: "v1beta" },
+    { model: "gemini-1.5-pro", version: "v1beta" }
+  ];
+
+  for (const config of configs) {
     try {
-      console.log(`[GEMINI] Trying Vision with ${modelName}...`);
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const data = fs.readFileSync(imagePath);
-      const ext = path.extname(imagePath).toLowerCase();
-      const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+      console.log(`[GEMINI] Trying Vision: ${config.model} (${config.version})...`);
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: config.model }, { apiVersion: config.version });
 
-      const imagePart = {
-        inlineData: { data: data.toString("base64"), mimeType },
-      };
-
-      const prompt = "EXTRACT MENU ITEMS. Return a JSON array of objects with 'name', 'price', and 'description'. Output ONLY JSON.";
       const result = await model.generateContent([prompt, imagePart]);
       const text = result.response.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (!jsonMatch) continue;
 
       const items = JSON.parse(jsonMatch[0]);
-      console.log(`[GEMINI] Success with ${modelName}!`);
+      console.log(`[GEMINI] SUCCESS with ${config.model}!`);
       return items;
     } catch (err) {
-      console.log(`[GEMINI] ${modelName} failed: ${err.message}`);
+      console.log(`[GEMINI] Vision ${config.model} (${config.version}) failed: ${err.message}`);
     }
   }
   return null;
@@ -59,25 +64,23 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
   }
 
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) {
-    return parseMenuTextToItems(rawText).map(n => ({ name: n, price: "—", description: "Set API Key" }));
-  }
+  const models = ["gemini-1.5-flash", "gemini-pro"];
+  const versions = ["v1beta", "v1"];
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.0-pro"];
-
-  for (const modelName of modelsToTry) {
-    try {
-      console.log(`[GEMINI] Trying Text with ${modelName}...`);
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const prompt = `Convert this OCR into JSON menu: ${rawText}`;
-      const result = await model.generateContent(prompt);
-      const text = result.response.text();
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) continue;
-      return JSON.parse(jsonMatch[0]);
-    } catch (err) {
-      console.log(`[GEMINI] Text ${modelName} failed: ${err.message}`);
+  for (const version of versions) {
+    for (const modelName of models) {
+      try {
+        console.log(`[GEMINI] Trying Text: ${modelName} (${version})...`);
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: modelName }, { apiVersion: version });
+        const prompt = `Convert this OCR into JSON menu: ${rawText}`;
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      } catch (err) {
+        console.log(`[GEMINI] Text ${modelName} (${version}) failed: ${err.message}`);
+      }
     }
   }
 
