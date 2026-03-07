@@ -396,6 +396,9 @@ app.get("/api/search", (req, res) => {
 });
 
 app.get("*", (req, res) => {
+  if (req.path.startsWith("/api")) {
+    return res.status(404).json({ error: "not_found" });
+  }
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
