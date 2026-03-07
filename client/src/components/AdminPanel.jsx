@@ -11,6 +11,8 @@ export default function AdminPanel() {
   const menuItems = useSelector((s) => s.menu.items);
   const images = useSelector((s) => s.menu.images);
   const lastPreview = useSelector((s) => s.menu.lastPreview);
+  const lastGuardrail = useSelector((s) => s.menu.lastGuardrail);
+  const lastSource = useSelector((s) => s.menu.lastSource);
   const [name, setName] = useState("");
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("");
@@ -99,6 +101,26 @@ export default function AdminPanel() {
       {lastPreview.length > 0 && (
         <div className="extracted">
           <div className="extracted-title">Extracted Items (AI Preview)</div>
+
+          {lastGuardrail && (
+            <div className="guardrail-status" style={{
+              padding: '12px',
+              borderRadius: '8px',
+              background: lastGuardrail.needsReview ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+              borderLeft: `4px solid ${lastGuardrail.needsReview ? '#ef4444' : '#10b981'}`,
+              marginBottom: '16px',
+              marginTop: '8px'
+            }}>
+              <div style={{ fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
+                <span>AI Guardrail Audit Score: {lastGuardrail.score}/10</span>
+                <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>Method: {lastSource?.toUpperCase()}</span>
+              </div>
+              <div style={{ fontSize: '0.9rem', marginTop: '4px' }}>
+                {lastGuardrail.needsReview ? `⚠️ ${lastGuardrail.reason || 'Verification recommended.'}` : '✅ Extraction looks highly accurate.'}
+              </div>
+            </div>
+          )}
+
           <div className="table-container" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
               <thead>

@@ -20,12 +20,17 @@ export const updateMenuItem = createAsyncThunk("menu/updateItem", async ({ token
 
 const slice = createSlice({
   name: "menu",
-  initialState: { items: [], images: [], lastPreview: [], status: "" },
+  initialState: { items: [], images: [], lastPreview: [], status: "", lastGuardrail: null, lastSource: "" },
   reducers: {},
   extraReducers: (builder) => {
     builder
       .addCase(fetchMenu.fulfilled, (state, action) => { state.items = action.payload.items; state.images = action.payload.images; })
-      .addCase(uploadImage.fulfilled, (state, action) => { state.status = `Image saved, added ${action.payload.added} items`; state.lastPreview = action.payload.itemsPreview || []; })
+      .addCase(uploadImage.fulfilled, (state, action) => {
+        state.status = `Image saved, added ${action.payload.added} items`;
+        state.lastPreview = action.payload.itemsPreview || [];
+        state.lastGuardrail = action.payload.guardrail;
+        state.lastSource = action.payload.source;
+      })
       .addCase(updateMenuItem.fulfilled, (state, action) => { state.items = state.items.map((m) => (m.id === action.payload.id ? action.payload : m)); });
   },
 });

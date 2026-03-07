@@ -38,9 +38,9 @@ export async function uploadAndOcr(req, res) {
     const url = `/uploads/${path.basename(f.path)}`;
     await addImage(id, url);
     const text = await recognizeImage(f.path);
-    const items = await extractStructuredMenuWithLLM(f.path, text);
+    const { items, guardrail, source } = await extractStructuredMenuWithLLM(f.path, text);
     const added = await addIfNotExistsMany(id, items, text);
-    res.json({ imageUrl: url, added, extracted: items.length, itemsPreview: items });
+    res.json({ imageUrl: url, added, extracted: items.length, itemsPreview: items, guardrail, source });
   } catch {
     res.status(500).json({ error: "upload_failed" });
   }

@@ -64,7 +64,16 @@ export async function extractStructuredMenuFromImage(imagePath) {
   const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
   const imagePart = { inlineData: { data, mimeType } };
 
-  const prompt = `Analyze this menu image. Extract JSON list of dishes with "name", "price", "description". Return ONLY JSON.`;
+  const prompt = `
+    Analyze this restaurant menu image and extract a structured JSON list of dishes.
+    For each dish, include:
+    - "name": The name of the dish.
+    - "price": The exact price (e.g., "$10.00", "₹250").
+    - "description": A short description based on visible details or standard menu context.
+    - "category": The menu section it belongs to (e.g., "Appetizers", "Main Course").
+
+    Return ONLY a valid JSON array of objects. Do not include markdown formatting or extra text.
+  `;
 
   for (const config of configs) {
     try {
@@ -95,31 +104,96 @@ export async function extractStructuredMenuFromImage(imagePath) {
     }
   }
 
-  console.log("[GEMINI] Vision failed. Running diagnostics...");
+  console.log("[GEMINI] Vision failed (library & rest). Running diagnostics...");
   await listAvailableModels(apiKey);
   return null;
 }
 
+/**
+ * DOOR DASH CONCEPT: Guardrail Model
+ * Verifies if the extracted menu items reasonably match the image context.
+ */
+export async function runGuardrailAudit(imagePath, extractedItems) {
+  const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey.startsWith("AIza") || !extractedItems || extractedItems.length === 0) return { score: 0, needsReview: true, reason: "AI not configured or no items extracted." };
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    const data = fs.readFileSync(imagePath).toString("base64");
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+    const imagePart = { inlineData: { data, mimeType } };
+
+    const auditPrompt = `
+      Compare these extracted menu items with the provided menu image:
+      ${JSON.stringify(extractedItems.slice(0, 10))}
+      
+      Rate the extraction accuracy from 0 to 10.
+      Identify if there are major hallucinations or missing categories.
+      Return JSON: { "score": number, "needsReview": boolean, "reason": "string" }
+    `;
+
+    const result = await model.generateContent([auditPrompt, imagePart]);
+    const res = await result.response;
+    const jsonMatch = res.text().match(/\{[\s\S]*\}/);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    console.error("[GUARDRAIL ERROR]", err.message);
+  }
+  return { score: 5, needsReview: true, reason: "Guardrail logic failed" };
+}
+
 export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "") {
+  let items = [];
+  let guardrailResult = { score: 0, needsReview: true };
+
+  // 1. Attempt Multimodal Vision (DoorDash high-efficiency path)
   if (imagePath && fs.existsSync(imagePath)) {
     const visionItems = await extractStructuredMenuFromImage(imagePath);
-    if (visionItems && visionItems.length > 0) return visionItems;
+    if (visionItems && visionItems.length > 0) {
+      items = visionItems;
+      // 2. Run Guardrail (DoorDash quality check)
+      guardrailResult = await runGuardrailAudit(imagePath, items);
+
+      if (!guardrailResult.needsReview && guardrailResult.score >= 8) {
+        return { items, guardrail: guardrailResult, source: "vision" };
+      }
+    }
   }
 
+  // 3. Fallback to OCR + LLM (Stable baseline)
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
   if (apiKey.startsWith("AIza") && rawText) {
     try {
+      console.log("[HYBRID] Vision unsatisfactory. Falling back to OCR + LLM...");
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `Extract menu JSON (name, price, description) from: ${rawText}`;
+      const prompt = `Extract structured menu JSON (name, price, description, category) from this OCR text: ${rawText}`;
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      if (jsonMatch) {
+        const llmItems = JSON.parse(jsonMatch[0]);
+        // Simple comparative guardrail for LLM fallback
+        if (llmItems.length > items.length || items.length === 0) {
+          return { items: llmItems, guardrail: { score: 7, needsReview: true }, source: "ocr_llm" };
+        }
+      }
     } catch (e) { }
   }
 
-  return parseMenuTextToItems(rawText);
+  // Final fallback to heuristic parser (The "Intact" logic)
+  if (items.length === 0) {
+    items = parseMenuTextToItems(rawText);
+  }
+
+  return {
+    items,
+    guardrail: guardrailResult || { score: 3, needsReview: true, reason: "Heuristic fallback" },
+    source: items.length > 0 ? "heuristic" : "failed"
+  };
 }
 
 export function parseMenuTextToItems(text) {
@@ -149,7 +223,7 @@ export function parseMenuTextToItems(text) {
       name = line.replace(priceMatch[0], "").trim();
     }
 
-    name = name.replace(/[^\w\s'&().-]/g, " ").replace(/\s+/g, " ").trim();
+    name = name.replace(/[^\w\s'&().-]/g, " ").replace(/\s+/g, " ").replace(/-$/, "").trim();
 
     const generateDesc = (n) => {
       const l = n.toLowerCase();
