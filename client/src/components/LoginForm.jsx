@@ -1,13 +1,23 @@
 import { useDispatch, useSelector } from "react-redux";
 import { login, register } from "../store/slices/authSlice.js";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function LoginForm() {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const status = useSelector((s) => s.auth.status);
   const error = useSelector((s) => s.auth.error);
+  const token = useSelector((s) => s.auth.token);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    if (token) {
+      navigate("/admin");
+    }
+  }, [token, navigate]);
+
   return (
     <div className="panel">
       <h2>Admin Login</h2>
