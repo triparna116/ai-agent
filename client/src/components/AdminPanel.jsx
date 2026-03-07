@@ -92,34 +92,56 @@ export default function AdminPanel() {
       {lastPreview.length > 0 && (
         <div className="extracted">
           <div className="extracted-title">Extracted Items (AI Preview)</div>
-          <ul style={{ listStyle: 'none', padding: 0 }}>
-            {lastPreview.map((it, i) => (
-              <li key={i} style={{ marginBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: 8 }}>
-                <strong>{it.name}</strong> - <span style={{ color: '#10b981' }}>{it.price || 'N/A'}</span>
-                {it.description && <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', opacity: 0.7 }}>{it.description}</p>}
-              </li>
-            ))}
-          </ul>
+          <div className="table-container" style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', borderBottom: '2px solid rgba(255,255,255,0.1)' }}>
+                  <th style={{ padding: 8 }}>Dish Name</th>
+                  <th style={{ padding: 8 }}>Price</th>
+                  <th style={{ padding: 8 }}>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lastPreview.map((it, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: 8 }}>{it.name}</td>
+                    <td style={{ padding: 8, color: '#10b981' }}>{it.price || '—'}</td>
+                    <td style={{ padding: 8, fontSize: '0.85rem', opacity: 0.7 }}>{it.description || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {menuItems.length > 0 && (
-        <div className="results" style={{ marginTop: 8 }}>
-          <div className="result">
-            <h3>Menu Items</h3>
-            <ul style={{ listStyle: 'none', padding: 0 }}>
-              {menuItems.map((m) => (
-                <li key={m.id} style={{ marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                    <div>
-                      <strong>{m.name}</strong>
-                      <div style={{ color: '#10b981', fontWeight: 600 }}>{m.price || 'N/A'}</div>
-                    </div>
-                    <button onClick={() => onEdit(m.id)} style={{ margin: 0, padding: '4px 8px', fontSize: '0.8rem' }}>Edit</button>
-                  </div>
-                  {m.description && <p style={{ margin: '8px 0 0 0', fontSize: '0.9rem', opacity: 0.7 }}>{m.description}</p>}
-                </li>
-              ))}
-            </ul>
+        <div className="results" style={{ marginTop: 20 }}>
+          <div className="result" style={{ width: '100%', maxWidth: 'none' }}>
+            <h3>Menu Items Table</h3>
+            <div className="table-container" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '2px solid rgba(255,255,255,0.1)' }}>
+                    <th style={{ padding: 8 }}>Dish Name</th>
+                    <th style={{ padding: 8 }}>Price</th>
+                    <th style={{ padding: 8 }}>Description</th>
+                    <th style={{ padding: 8 }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {menuItems.map((m) => (
+                    <tr key={m.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                      <td style={{ padding: 8, fontWeight: 500 }}>{m.name}</td>
+                      <td style={{ padding: 8, color: '#10b981', fontWeight: 600 }}>{m.price || '—'}</td>
+                      <td style={{ padding: 8, fontSize: '0.85rem', opacity: 0.7 }}>{m.description || '—'}</td>
+                      <td style={{ padding: 8 }}>
+                        <button onClick={() => onEdit(m.id)} style={{ margin: 0, padding: '4px 8px', fontSize: '0.8rem' }}>Edit</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

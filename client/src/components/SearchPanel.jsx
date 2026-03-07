@@ -19,17 +19,26 @@ export default function SearchPanel() {
         {results.map((r) => (
           <div key={r.restaurantName} className="result">
             <h3>{r.restaurantName}</h3>
-            <ul style={{ listStyle: 'none', padding: 0 }}>
-              {r.items.map((it, i) => (
-                <li key={i} style={{ marginBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong>{it.name}</strong>
-                    <span style={{ color: '#10b981', fontWeight: 600 }}>{it.price}</span>
-                  </div>
-                  {it.description && <p style={{ margin: '4px 0 0 0', fontSize: '0.9rem', opacity: 0.7 }}>{it.description}</p>}
-                </li>
-              ))}
-            </ul>
+            <div className="table-container" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '2px solid rgba(255,255,255,0.1)' }}>
+                    <th style={{ padding: 8 }}>Dish Name</th>
+                    <th style={{ padding: 8 }}>Price</th>
+                    <th style={{ padding: 8 }}>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.items.map((it, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: 8, fontWeight: 500 }}>{it.name}</td>
+                      <td style={{ padding: 8, color: '#10b981', fontWeight: 600 }}>{it.price || '—'}</td>
+                      <td style={{ padding: 8, fontSize: '0.85rem', opacity: 0.7 }}>{it.description || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         ))}
       </div>

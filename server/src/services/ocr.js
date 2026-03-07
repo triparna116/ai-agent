@@ -14,7 +14,7 @@ export async function recognizeImage(path) {
 export async function extractStructuredMenuWithLLM(rawText) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.error("GEMINI_API_KEY is not set. Falling back to simple parsing.");
+    console.log("CRITICAL: GEMINI_API_KEY is missing from environment. Simple parser fallback active.");
     return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
   }
 
@@ -22,35 +22,42 @@ export async function extractStructuredMenuWithLLM(rawText) {
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   const prompt = `
-    You are an expert menu analyzer. I will provide you with messy OCR text from a restaurant menu.
-    Please extract a clean list of dishes. For each dish, provide:
-    1. The name of the dish.
-    2. The price (if available, otherwise empty string).
-    3. A brief description (if available, otherwise empty string).
-
-    Return ONLY a valid JSON array of objects. Do not include any markdown or extra text.
-    Example format:
+    You are an expert OCR cleaner and menu extractor. 
+    I will provide you with messy, noisy OCR text from a restaurant menu image. 
+    Your task is to:
+    1. Identify actual food and drink items.
+    2. Ignore OCR noise (random symbols like |, _, ~, @, #, noise characters like "boda NN JES").
+    3. Correct misspelled words (e.g., if OCR says "Chicckn Biryani", you should fix it to "Chicken Biryani").
+    4. Extract the Price and a brief Description if they appear near the Dish Name.
+    
+    Return ONLY a valid JSON array of objects.
+    Example Format:
     [
-      {"name": "Margherita Pizza", "price": "$12.00", "description": "Tomato sauce, mozzarella, basil"},
-      {"name": "Burger", "price": "$10.50", "description": "Beef patty with cheese and lettuce"}
+      {"name": "Mutton Biryani", "price": "₹250", "description": "Slow-cooked aromatic rice with tender mutton and spices"},
+      {"name": "Paneer Tikka", "price": "₹180", "description": "Grilled cottage cheese marinated in yogurt and spices"}
     ]
 
-    Messy OCR text:
+    If the text is too messy to extract anything useful, return an empty array [].
+    Do not add any conversational text or markdown.
+
+    Messy OCR Text:
+    """
     ${rawText}
+    """
   `;
 
   try {
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
+    console.log("Gemini Response Received. Length:", text.length);
 
-    // Clean potential markdown code blocks from response
     const jsonString = text.replace(/```json|```/g, "").trim();
     const items = JSON.parse(jsonString);
 
     return Array.isArray(items) ? items : [];
   } catch (error) {
-    console.error("LLM Extraction failed:", error);
+    console.error("Gemini Extraction failed:", error);
     return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
   }
 }
