@@ -17,7 +17,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change";
 
-app.use(cors({ origin: ["http://localhost:5173"], credentials: true }));
+app.use(cors({ origin: "*", credentials: true }));
 app.use(express.json());
 app.use("/uploads", express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), "uploads")));
 
@@ -128,13 +128,13 @@ app.post("/api/restaurants/:id/upload", auth, upload.single("image"), async (req
     const id = Number(req.params.id);
     const r = db.data.restaurants.find((x) => x.id === id);
     if (!r) {
-      if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
+      if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch { }
       return res.status(404).json({ error: "not_found" });
     }
     const f = req.file;
     if (!f) return res.status(400).json({ error: "image_required" });
     if (!ALLOWED_MIME.has(f.mimetype)) {
-      try { fs.unlinkSync(f.path); } catch {}
+      try { fs.unlinkSync(f.path); } catch { }
       return res.status(415).json({ error: "unsupported_media_type", allowed: Array.from(ALLOWED_MIME) });
     }
     const url = `http://localhost:${PORT}/uploads/${path.basename(f.path)}`;
@@ -143,24 +143,24 @@ app.post("/api/restaurants/:id/upload", auth, upload.single("image"), async (req
     let text = "";
     try {
       const result = await Tesseract.recognize(f.path, "eng", {
-        logger: () => {},
+        logger: () => { },
         tessedit_char_whitelist: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -'&().",
         psm: 6,
         preserve_interword_spaces: "1",
       });
       text = result.data.text || "";
     } catch {
-      try { fs.unlinkSync(f.path); } catch {}
+      try { fs.unlinkSync(f.path); } catch { }
       return res.status(422).json({ error: "ocr_failed" });
     } finally {
-      try { fs.unlinkSync(f.path); } catch {}
+      try { fs.unlinkSync(f.path); } catch { }
     }
     const items = parseMenuTextToItems(text);
     const existingNames = new Set(
       db.data.menu_items.filter((mi) => mi.restaurant_id === id).map((mi) => mi.name.toLowerCase())
     );
-  let inserted = 0;
-  for (const name of items) {
+    let inserted = 0;
+    for (const name of items) {
       if (!existingNames.has(name.toLowerCase())) {
         db.data.menu_items.push({
           id: Date.now() + Math.random(),
@@ -168,17 +168,17 @@ app.post("/api/restaurants/:id/upload", auth, upload.single("image"), async (req
           name,
           raw_text: text,
         });
-      inserted++;
+        inserted++;
       }
     }
     await db.write();
-  res.json({
-    imageUrl: url,
-    added: inserted,
-    extracted: items.length,
-    itemsPreview: items.slice(0, 50),
-    total: db.data.menu_items.filter((mi) => mi.restaurant_id === id).length
-  });
+    res.json({
+      imageUrl: url,
+      added: inserted,
+      extracted: items.length,
+      itemsPreview: items.slice(0, 50),
+      total: db.data.menu_items.filter((mi) => mi.restaurant_id === id).length
+    });
   } catch {
     res.status(500).json({ error: "upload_failed" });
   }
@@ -262,7 +262,7 @@ app.post("/api/ingest", upload.array("images", 8), async (req, res) => {
     const bad = files.filter((f) => !ALLOWED_MIME.has(f.mimetype));
     if (bad.length > 0) {
       for (const f of files) {
-        try { fs.unlinkSync(f.path); } catch {}
+        try { fs.unlinkSync(f.path); } catch { }
       }
       return res
         .status(415)
@@ -284,7 +284,7 @@ app.post("/api/ingest", upload.array("images", 8), async (req, res) => {
     for (const f of files) {
       try {
         const result = await Tesseract.recognize(f.path, "eng", {
-          logger: () => {},
+          logger: () => { },
           tessedit_char_whitelist:
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -'&().",
           psm: 6,
@@ -293,10 +293,10 @@ app.post("/api/ingest", upload.array("images", 8), async (req, res) => {
         ocrResults.push(result.data.text || "");
       } catch (err) {
         // Clean up and report a readable error
-        try { fs.unlinkSync(f.path); } catch {}
+        try { fs.unlinkSync(f.path); } catch { }
         return res.status(422).json({ error: "ocr_failed", details: "Could not read image" });
       } finally {
-        try { fs.unlinkSync(f.path); } catch {}
+        try { fs.unlinkSync(f.path); } catch { }
       }
     }
     const combinedText = ocrResults.join("\n");
