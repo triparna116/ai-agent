@@ -22,11 +22,17 @@ export async function extractStructuredMenuFromImage(imagePath) {
 
   if (!apiKey.startsWith("AIza")) {
     console.log("**************************************************");
-    console.log("[GEMINI] CRITICAL WARNING: Your API Key does NOT look like a real Gemini key.");
-    console.log(`[GEMINI] Key starts with: "${apiKey.substring(0, 8)}..."`);
-    console.log("[GEMINI] A real key must start with 'AIza'. Did you paste the NAME of the key by mistake?");
+    console.log("[GEMINI] CRITICAL CONFIG ERROR");
+    console.log(`[GEMINI] Your key starts with: "${apiKey.substring(0, 10)}..."`);
+    console.log("[GEMINI] A valid code MUST start with 'AIza'.");
+    console.log("[GEMINI] You likely pasted the 'Key Name' by mistake.");
     console.log("**************************************************");
-    return null;
+    // Return a special error item to show in the UI
+    return [{
+      name: "⚠️ AI Key Config Error",
+      price: "HELP",
+      description: "You pasted the KEY NAME. Please paste the AIza-code into Render."
+    }];
   }
 
   console.log(`[GEMINI] API Key looks valid (starts with ${apiKey.substring(0, 4)}). Waking up AI...`);
@@ -148,10 +154,20 @@ export function parseMenuTextToItems(text) {
       items.push({
         name,
         price,
-        description: "AI Offline (Check API Key in Render Logs)"
+        description: "AI Offline (Auto-Parsed)"
       });
     }
   }
+
+  // If nothing survived the filters, show one diagnostic entry instead of an empty screen
+  if (items.length === 0) {
+    items.push({
+      name: "No items detected",
+      price: "Check Key",
+      description: "AI failed and OCR was too messy. Please verify your Gemini Key in Render."
+    });
+  }
+
   // Return the best 40 items
   return items.slice(0, 40);
 }
