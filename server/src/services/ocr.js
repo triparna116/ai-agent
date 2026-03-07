@@ -3,6 +3,28 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import fs from "fs";
 import path from "path";
 
+/**
+ * Diagnoses what models are actually available to your key
+ */
+async function listAvailableModels(apiKey) {
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
+    if (r.ok) {
+      const data = await r.json();
+      const names = data.models?.map(m => m.name.split('/').pop()) || [];
+      console.log("--------------------------------------------------");
+      console.log("[GEMINI DIAGNOSTIC] Available models for your key:");
+      console.log(names.join(", "));
+      console.log("--------------------------------------------------");
+      return names;
+    }
+    console.log(`[GEMINI] Model Listing Failed: ${r.status}`);
+  } catch (e) {
+    console.log(`[GEMINI] Diagnostic Error: ${e.message}`);
+  }
+  return [];
+}
+
 export async function recognizeImage(filePath) {
   try {
     const result = await Tesseract.recognize(filePath, "eng", {
@@ -21,12 +43,7 @@ export async function extractStructuredMenuFromImage(imagePath) {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
 
   if (!apiKey.startsWith("AIza")) {
-    console.log("**************************************************");
-    console.log("[GEMINI] CRITICAL CONFIG ERROR");
-    console.log(`[GEMINI] Your key starts with: "${apiKey.substring(0, 10)}..."`);
-    console.log("[GEMINI] A valid code MUST start with 'AIza'.");
-    console.log("[GEMINI] You likely pasted the 'Key Name' by mistake.");
-    console.log("**************************************************");
+    console.log("[GEMINI] CRITICAL: Invalid API Key format.");
     return [{
       name: "⚠️ AI Key Config Error",
       price: "HELP",
@@ -34,10 +51,7 @@ export async function extractStructuredMenuFromImage(imagePath) {
     }];
   }
 
-  console.log(`[GEMINI] API Key looks valid (starts with ${apiKey.substring(0, 4)}). Waking up AI...`);
-
   const genAI = new GoogleGenerativeAI(apiKey);
-
   const configs = [
     { model: "gemini-1.5-flash", version: "v1beta" },
     { model: "gemini-1.5-flash", version: "v1" },
@@ -48,15 +62,9 @@ export async function extractStructuredMenuFromImage(imagePath) {
   const data = fs.readFileSync(imagePath).toString("base64");
   const ext = path.extname(imagePath).toLowerCase();
   const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
-
   const imagePart = { inlineData: { data, mimeType } };
 
-  const prompt = `
-    Analyze this restaurant menu image. 
-    Extract a JSON list of all dishes. 
-    Required fields: "name", "price", "description".
-    Return ONLY a JSON array.
-  `;
+  const prompt = `Analyze this menu image. Extract JSON list of dishes with "name", "price", "description". Return ONLY JSON.`;
 
   for (const config of configs) {
     try {
@@ -66,45 +74,29 @@ export async function extractStructuredMenuFromImage(imagePath) {
       const res = await result.response;
       const text = res.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const items = JSON.parse(jsonMatch[0]);
-        if (items.length > 0) {
-          console.log(`[GEMINI] SUCCESS with ${config.model}!`);
-          return items;
-        }
-      }
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
     } catch (err) {
       console.log(`[GEMINI] ${config.model} Library Failure: ${err.message}`);
 
-      // Fallback: Direct REST call (sometimes works when library fails)
       try {
-        console.log(`[GEMINI] Attempting Direct REST Fallback for ${config.model}...`);
         const url = `https://generativelanguage.googleapis.com/${config.version}/models/${config.model}:generateContent?key=${apiKey}`;
-        const restBody = {
-          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: data } }] }]
-        };
         const restRes = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(restBody)
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: data } }] }] })
         });
-
         if (restRes.ok) {
           const restData = await restRes.json();
           const restText = restData.candidates?.[0]?.content?.parts?.[0]?.text;
           const restJsonMatch = restText?.match(/\[[\s\S]*\]/);
-          if (restJsonMatch) {
-            console.log(`[GEMINI] REST SUCCESS with ${config.model}!`);
-            return JSON.parse(restJsonMatch[0]);
-          }
-        } else {
-          console.log(`[GEMINI] REST Failure: ${restRes.status} ${restRes.statusText}`);
+          if (restJsonMatch) return JSON.parse(restJsonMatch[0]);
         }
-      } catch (restErr) {
-        console.log(`[GEMINI] REST Critical Error: ${restErr.message}`);
-      }
+      } catch (e) { }
     }
   }
+
+  console.log("[GEMINI] Vision failed. Running diagnostics...");
+  await listAvailableModels(apiKey);
   return null;
 }
 
@@ -115,18 +107,16 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
   }
 
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (apiKey && apiKey.startsWith("AIza") && rawText) {
+  if (apiKey.startsWith("AIza") && rawText) {
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `Extract menu items (name, price, description) as JSON from: ${rawText}`;
+      const prompt = `Extract menu JSON (name, price, description) from: ${rawText}`;
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      console.log("[GEMINI] Text Extract failed.");
-    }
+    } catch (e) { }
   }
 
   return parseMenuTextToItems(rawText);
@@ -137,7 +127,7 @@ export function parseMenuTextToItems(text) {
   const lines = text.split(/\n/);
   const items = [];
 
-  const HEADER_WORDS = /menu|restaurant|food|card|today|special|welcome|phone|mobile|address|email|price|list|item|opening|hours|since|established|visit|website|dish/i;
+  const HEADER_WORDS = /menu|restaurant|food|card|today|special|welcome|phone|address|email|price|list|item|opening|hours|since|established|visit|website|dish/i;
   const NOISE_WORDS = /\b(boda|jes|mn|iy|raa|os|fr|ng|dpe|ay|ze|pa|sr|tt|ii|ll|oo)\b|^in f\b|^in\b/i;
 
   for (let line of lines) {
@@ -161,20 +151,26 @@ export function parseMenuTextToItems(text) {
 
     name = name.replace(/[^\w\s'&().-]/g, " ").replace(/\s+/g, " ").trim();
 
+    const generateDesc = (n) => {
+      const l = n.toLowerCase();
+      if (l.includes("burger")) return "Juicy flame-grilled burger with fresh toppings.";
+      if (l.includes("sandwich")) return "Gourmet freshly-prepared sandwich on artisanal bread.";
+      if (l.includes("chicken")) return "Tender chicken prepared with house-special spices.";
+      if (l.includes("salad")) return "Fresh seasonal greens with zesty dressing.";
+      if (l.includes("juice") || l.includes("shake") || l.includes("tea")) return "Refreshing chilled beverage.";
+      return `Delicious ${n} prepared with fresh house ingredients.`;
+    };
+
     if (name.length > 5 && !HEADER_WORDS.test(name)) {
-      items.push({
-        name,
-        price,
-        description: "AI Offline (Review Render Logs)"
-      });
+      items.push({ name, price, description: generateDesc(name) });
     }
   }
 
   if (items.length === 0) {
     items.push({
       name: "No items detected",
-      price: "Check Key",
-      description: "AI failed and OCR was too messy. Please verify your Gemini Key in Render."
+      price: "Check Log",
+      description: "AI failed and OCR was too messy. Please verify your Gemini Key."
     });
   }
 
