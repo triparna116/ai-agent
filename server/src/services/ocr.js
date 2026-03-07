@@ -27,7 +27,6 @@ export async function extractStructuredMenuFromImage(imagePath) {
     console.log("[GEMINI] A valid code MUST start with 'AIza'.");
     console.log("[GEMINI] You likely pasted the 'Key Name' by mistake.");
     console.log("**************************************************");
-    // Return a special error item to show in the UI
     return [{
       name: "⚠️ AI Key Config Error",
       price: "HELP",
@@ -39,7 +38,6 @@ export async function extractStructuredMenuFromImage(imagePath) {
 
   const genAI = new GoogleGenerativeAI(apiKey);
 
-  // Try stable versions and models
   const configs = [
     { model: "gemini-1.5-flash", version: "v1beta" },
     { model: "gemini-1.5-flash", version: "v1" },
@@ -51,18 +49,13 @@ export async function extractStructuredMenuFromImage(imagePath) {
   const ext = path.extname(imagePath).toLowerCase();
   const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
 
-  const imagePart = {
-    inlineData: {
-      data,
-      mimeType
-    }
-  };
+  const imagePart = { inlineData: { data, mimeType } };
 
   const prompt = `
     Analyze this restaurant menu image. 
     Extract a JSON list of all dishes. 
     Required fields: "name", "price", "description".
-    Return ONLY a JSON array. If nothing found, return [].
+    Return ONLY a JSON array.
   `;
 
   for (const config of configs) {
@@ -82,6 +75,8 @@ export async function extractStructuredMenuFromImage(imagePath) {
       }
     } catch (err) {
       console.log(`[GEMINI] ${config.model} failed: ${err.message}`);
+      // Log the first part of the stack for deep debugging if available
+      if (err.stack) console.log(err.stack.split('\n')[0]);
     }
   }
   return null;
@@ -94,17 +89,17 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
   }
 
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (apiKey && rawText) {
+  if (apiKey && apiKey.startsWith("AIza") && rawText) {
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `Clean this messy OCR text into a JSON menu list (name, price, description): ${rawText}`;
+      const prompt = `Extract menu items (name, price, description) as JSON from: ${rawText}`;
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (jsonMatch) return JSON.parse(jsonMatch[0]);
     } catch (e) {
-      console.log("[GEMINI] Text Extract failed, using smart fallback.");
+      console.log("[GEMINI] Text Extract failed.");
     }
   }
 
@@ -116,28 +111,19 @@ export function parseMenuTextToItems(text) {
   const lines = text.split(/\n/);
   const items = [];
 
-  // Words that indicate a header or meta-information rather than a dish
-  const HEADER_WORDS = /menu|restaurant|food|card|today|special|welcome|phone|mobile|address|email|price|list|item|opening|hours|since|established|visit|website/i;
-  // Garbage OCR patterns (mostly single letters or nonsense)
-  const NOISE_WORDS = /\b(boda|jes|mn|iy|raa|os|fr|ng|dpe|ay|ze|pa|sr|tt|ii|ll|oo)\b/i;
+  const HEADER_WORDS = /menu|restaurant|food|card|today|special|welcome|phone|mobile|address|email|price|list|item|opening|hours|since|established|visit|website|dish/i;
+  const NOISE_WORDS = /\b(boda|jes|mn|iy|raa|os|fr|ng|dpe|ay|ze|pa|sr|tt|ii|ll|oo)\b|^in f\b|^in\b/i;
 
   for (let line of lines) {
     line = line.trim().replace(/[|_~`^<>\\]+/g, "").replace(/\s+/g, " ");
+    if (line.length < 5) continue;
 
-    // Skip very short lines
-    if (line.length < 4) continue;
-
-    // Skip obvious headers (unless they are long enough to be a dish)
     if (HEADER_WORDS.test(line) && line.split(" ").length < 4) continue;
-
-    // Skip nonsense OCR noise
     if (NOISE_WORDS.test(line) && line.length < 15) continue;
 
-    // Skip lines with too many special characters
     const alphaCount = (line.match(/[a-zA-Z]/g) || []).length;
-    if (alphaCount / line.length < 0.4) continue;
+    if (alphaCount / line.length < 0.3) continue;
 
-    // Find Price patterns
     const priceMatch = line.match(/([₹$]|Rs\.?)\s?(\d+)|(\d+)\s?(\/\-)/i);
     let name = line;
     let price = "—";
@@ -147,19 +133,17 @@ export function parseMenuTextToItems(text) {
       name = line.replace(priceMatch[0], "").trim();
     }
 
-    // Clean up the name
     name = name.replace(/[^\w\s'&().-]/g, " ").replace(/\s+/g, " ").trim();
 
     if (name.length > 5 && !HEADER_WORDS.test(name)) {
       items.push({
         name,
         price,
-        description: "AI Offline (Auto-Parsed)"
+        description: "AI Offline (Review Render Logs)"
       });
     }
   }
 
-  // If nothing survived the filters, show one diagnostic entry instead of an empty screen
   if (items.length === 0) {
     items.push({
       name: "No items detected",
@@ -168,7 +152,6 @@ export function parseMenuTextToItems(text) {
     });
   }
 
-  // Return the best 40 items
   return items.slice(0, 40);
 }
 
