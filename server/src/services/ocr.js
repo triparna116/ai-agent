@@ -1,4 +1,5 @@
 import Tesseract from "tesseract.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import fs from "fs";
 import path from "path";
 
@@ -16,63 +17,62 @@ export async function recognizeImage(filePath) {
   }
 }
 
-/**
- * Direct fetch to Google's REST API. Bypasses library issues.
- */
-async function geminiDirect(url, apiKey, body) {
-  try {
-    const res = await fetch(`${url}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      console.log(`[GEMINI DIRECT ERROR] ${res.status}: ${JSON.stringify(data)}`);
-      return null;
-    }
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return null;
-
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-  } catch (e) {
-    console.error("[GEMINI DIRECT EXCEPTION]", e.message);
-    return null;
-  }
-}
-
 export async function extractStructuredMenuFromImage(imagePath) {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) return null;
-
-  const data = fs.readFileSync(imagePath).toString("base64");
-
-  const prompt = "EXTRACT MENU ITEMS. Return a JSON array of objects with 'name', 'price', and 'description'. Output ONLY JSON.";
-  const body = {
-    contents: [{
-      parts: [
-        { text: prompt },
-        { inline_data: { mime_type: "image/jpeg", data } }
-      ]
-    }]
-  };
-
-  // Try different endpoints directly
-  const urls = [
-    "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent"
-  ];
-
-  for (const url of urls) {
-    console.log(`[GEMINI] Trying Direct API: ${url.split('/').pop()}...`);
-    const results = await geminiDirect(url, apiKey, body);
-    if (results && results.length > 0) return results;
+  if (!apiKey) {
+    console.log("[GEMINI] Missing API key.");
+    return null;
   }
 
+  console.log(`[GEMINI] Using API Key starting with: ${apiKey.substring(0, 4)}...`);
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  // Try stable versions and models
+  const configs = [
+    { model: "gemini-1.5-flash", version: "v1beta" },
+    { model: "gemini-1.5-flash", version: "v1" },
+    { model: "gemini-1.5-pro", version: "v1beta" },
+    { model: "gemini-pro-vision", version: "v1beta" }
+  ];
+
+  const data = fs.readFileSync(imagePath).toString("base64");
+  const ext = path.extname(imagePath).toLowerCase();
+  const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+
+  const imagePart = {
+    inlineData: {
+      data,
+      mimeType
+    }
+  };
+
+  const prompt = `
+    Analyze this restaurant menu image. 
+    Extract a JSON list of all dishes. 
+    Required fields: "name", "price", "description".
+    Return ONLY a JSON array. If nothing found, return [].
+  `;
+
+  for (const config of configs) {
+    try {
+      console.log(`[GEMINI] Attempting Vision: ${config.model} (${config.version})...`);
+      const model = genAI.getGenerativeModel({ model: config.model }, { apiVersion: config.version });
+      const result = await model.generateContent([prompt, imagePart]);
+      const res = await result.response;
+      const text = res.text();
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const items = JSON.parse(jsonMatch[0]);
+        if (items.length > 0) {
+          console.log(`[GEMINI] SUCCESS with ${config.model}!`);
+          return items;
+        }
+      }
+    } catch (err) {
+      console.log(`[GEMINI] ${config.model} failed: ${err.message}`);
+    }
+  }
   return null;
 }
 
@@ -83,30 +83,44 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
   }
 
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (apiKey) {
-    const body = { contents: [{ parts: [{ text: `Convert this OCR into clean JSON: ${rawText}` }] }] };
-    const url = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent";
-    const results = await geminiDirect(url, apiKey, body);
-    if (results) return results;
+  if (apiKey && rawText) {
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const prompt = `Clean this messy OCR text into a JSON menu list (name, price, description): ${rawText}`;
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    } catch (e) {
+      console.log("[GEMINI] Text Extract failed, using smart fallback.");
+    }
   }
 
-  // Final Smart Fallback
   return parseMenuTextToItems(rawText);
 }
 
 /**
- * Smart Regex-based Fallback. Extracts Price even if AI fails.
+ * Highly selective fallback parser. 
+ * Filters out garbage headers and common OCR noise.
  */
 export function parseMenuTextToItems(text) {
   if (!text) return [];
   const lines = text.split(/\n/);
   const items = [];
 
+  const HEADER_WORDS = /menu|restaurant|food|card|today|special|welcome|phone|mobile|address|email|price|list|item/i;
+  const NOISE_WORDS = /boda|jes|mn|iy|raa|os|fr|ng|dpe|ay|ze|pa|sr|tt/i;
+
   for (let line of lines) {
     line = line.trim().replace(/[|_~`^<>\\]+/g, "").replace(/\s+/g, " ");
-    if (line.length < 3) continue;
+    if (line.length < 5) continue;
 
-    // Look for price patterns like $34, ₹250, Rs. 100, 250/-
+    // Filter out common header or garbage noise lines
+    if (HEADER_WORDS.test(line) && line.split(" ").length < 4) continue;
+    if (NOISE_WORDS.test(line) && line.length < 10) continue;
+
+    // Find Price
     const priceMatch = line.match(/([₹$]|Rs\.?)\s?(\d+)|(\d+)\s?(\/\-)/i);
     let name = line;
     let price = "—";
@@ -116,10 +130,9 @@ export function parseMenuTextToItems(text) {
       name = line.replace(priceMatch[0], "").trim();
     }
 
-    // Final clean name (remove noise)
-    name = name.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+    name = name.replace(/[^\w\s'&().-]/g, " ").replace(/\s+/g, " ").trim();
 
-    if (name.length > 3 && !/menu|restaurant|page|card|price|phone/i.test(name)) {
+    if (name.length > 4 && !HEADER_WORDS.test(name)) {
       items.push({
         name,
         price,
@@ -127,7 +140,7 @@ export function parseMenuTextToItems(text) {
       });
     }
   }
-  return items.slice(0, 40);
+  return items.slice(0, 30);
 }
 
 export function fuzzySearch(rows, q) {
