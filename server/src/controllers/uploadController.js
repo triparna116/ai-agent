@@ -37,13 +37,8 @@ export async function uploadAndOcr(req, res) {
     }
     const url = `/uploads/${path.basename(f.path)}`;
     await addImage(id, url);
-    let text = "";
-    try {
-      text = await recognizeImage(f.path);
-    } catch {
-      return res.status(422).json({ error: "ocr_failed" });
-    }
-    const items = await extractStructuredMenuWithLLM(text);
+    const text = await recognizeImage(f.path);
+    const items = await extractStructuredMenuWithLLM(text, f.path);
     const added = await addIfNotExistsMany(id, items, text);
     res.json({ imageUrl: url, added, extracted: items.length, itemsPreview: items });
   } catch {

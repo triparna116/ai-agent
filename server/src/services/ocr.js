@@ -1,5 +1,6 @@
 import Tesseract from "tesseract.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import fs from "fs";
 
 export async function recognizeImage(path) {
   const result = await Tesseract.recognize(path, "eng", {
@@ -8,154 +9,80 @@ export async function recognizeImage(path) {
     psm: 6,
     preserve_interword_spaces: "1",
   });
-  console.log("--- RAW OCR DATA START ---");
-  console.log(result.data.text);
-  console.log("--- RAW OCR DATA END ---");
   return result.data.text || "";
 }
 
-export async function extractStructuredMenuWithLLM(rawText) {
+export async function extractStructuredMenuFromImage(imagePath) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+  try {
+    const data = fs.readFileSync(imagePath);
+    const imagePart = {
+      inlineData: {
+        data: data.toString("base64"),
+        mimeType: "image/jpeg",
+      },
+    };
+
+    const prompt = `
+      Look at this restaurant menu image. 
+      Extract ALL food and drink items in a professional list. 
+      For each item: 
+      - name: The full dish name
+      - price: The exact price with currency (e.g. ₹200 or $5)
+      - description: A short, simple 1-sentence description if the menu provides one, or a helpful guess based on the name.
+      
+      IMPORTANT: Only return a clean JSON array. No markdown, no text.
+      Example: [{"name": "Pasta", "price": "$12", "description": "Creamy white sauce pasta"}]
+    `;
+
+    const result = await model.generateContent([prompt, imagePart]);
+    const response = await result.response;
+    const text = response.text().replace(/```json|```/g, "").trim();
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("Gemini Vision Error:", error);
+    return null;
+  }
+}
+
+export async function extractStructuredMenuWithLLM(rawText, imagePath = null) {
+  // Always try Vision if possible
+  if (imagePath) {
+    const results = await extractStructuredMenuFromImage(imagePath);
+    if (results && Array.isArray(results) && results.length > 0) {
+      return results;
+    }
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.log("CRITICAL: GEMINI_API_KEY is missing from environment. Simple parser fallback active.");
     return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-  const prompt = `
-    You are an expert OCR cleaner and menu extractor. 
-    I will provide you with messy, noisy OCR text from a restaurant menu image. 
-    Your task is to:
-    1. Identify actual food and drink items.
-    2. Ignore OCR noise (random symbols like |, _, ~, @, #, noise characters like "boda NN JES").
-    3. Correct misspelled words (e.g., if OCR says "Chicckn Biryani", you should fix it to "Chicken Biryani").
-    4. Extract the Price and a brief Description if they appear near the Dish Name.
-    
-    Return ONLY a valid JSON array of objects.
-    Example Format:
-    [
-      {"name": "Mutton Biryani", "price": "₹250", "description": "Slow-cooked aromatic rice with tender mutton and spices"},
-      {"name": "Paneer Tikka", "price": "₹180", "description": "Grilled cottage cheese marinated in yogurt and spices"}
-    ]
-
-    If the text is too messy to extract anything useful, return an empty array [].
-    Do not add any conversational text or markdown.
-
-    Messy OCR Text:
-    """
-    ${rawText}
-    """
-  `;
-
   try {
+    const prompt = `Extract dish name, price, description from this OCR text: ${rawText}. Return only JSON.`;
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    console.log("Gemini Response Received. Length:", text.length);
-
-    const jsonString = text.replace(/```json|```/g, "").trim();
-    const items = JSON.parse(jsonString);
-
-    return Array.isArray(items) ? items : [];
-  } catch (error) {
-    console.error("Gemini Extraction failed:", error);
+    const text = result.response.text().replace(/```json|```/g, "").trim();
+    return JSON.parse(text);
+  } catch {
     return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
   }
 }
 
 export function parseMenuTextToItems(text) {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-  const items = [];
-  const hasVowel = (s) => /[aeiou]/i.test(s);
-  const STOPWORDS = new Set([
-    "menu",
-    "dessert",
-    "desserts",
-    "starters",
-    "beverages",
-    "appetizers",
-    "soups",
-    "main course",
-    "chef special",
-    "specials",
-    "combo",
-    "always fresh",
-    "always hot",
-    "designed by",
-    "name of dish",
-    "hot",
-  ]);
-  for (const line of lines) {
-    let cleaned = line
-      .replace(/[|_~`^<>\\]+/g, " ")
-      .replace(/[@#*•\-–—]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (cleaned.length < 4) continue;
-    if (/^\d/.test(cleaned)) continue;
-    if (/only|mrp|vat|tax|total|amount|service|rs\.?|₹|\$|tk|bdt/i.test(cleaned)) continue;
-    if (/^\d+(\.\d{1,2})?$/.test(cleaned)) continue;
-    const lc = cleaned.toLowerCase();
-    let skip = false;
-    for (const sw of STOPWORDS) {
-      if (lc === sw || lc.includes(sw)) { skip = true; break; }
-    }
-    if (skip) continue;
-    const letters = (cleaned.match(/[A-Za-z]/g) || []).length;
-    const ratio = letters / cleaned.length;
-    if (ratio < 0.5) continue;
-    if (!hasVowel(cleaned)) continue;
-    const tokens = cleaned.split(" ").filter(Boolean);
-    if (tokens.length === 1) {
-      const t = tokens[0];
-      if (t.toUpperCase() === t && t.length > 3) continue;
-      if (t.length < 5) continue;
-    } else if (tokens.length < 2) continue;
-    if (tokens.length === 1 && tokens[0].toUpperCase() === tokens[0] && tokens[0].length > 3) continue;
-    if (tokens.every((t) => t.length <= 2)) continue;
-    cleaned = tokens.map((t) => (t.length <= 1 ? "" : t)).filter(Boolean).join(" ").trim();
-    if (cleaned.length < 4) continue;
-    items.push(cleaned);
-  }
-  const uniq = Array.from(new Set(items.map((s) => s.replace(/\s+/g, " ").trim())));
-  return uniq.slice(0, 200);
+  // Simple fallback parser (kept for safety)
+  return text.split("\n").map(l => l.trim()).filter(l => l.length > 5).slice(0, 50);
 }
 
 export function fuzzySearch(rows, q) {
-  const normalize = (s) =>
-    s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-  const lev = (a, b) => {
-    const m = a.length;
-    const n = b.length;
-    if (m === 0) return n;
-    if (n === 0) return m;
-    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-    for (let i = 0; i <= m; i++) dp[i][0] = i;
-    for (let j = 0; j <= n; j++) dp[0][j] = j;
-    for (let i = 1; i <= m; i++) {
-      for (let j = 1; j <= n; j++) {
-        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-        dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
-      }
-    }
-    return dp[m][n];
-  };
+  const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
   const qn = normalize(q);
-  const out = [];
-  for (const mi of rows) {
-    const nn = normalize(mi.name);
-    let ok = false;
-    if (nn.includes(qn)) ok = true;
-    if (!ok && qn.length >= 4) {
-      const words = nn.split(" ").filter(Boolean);
-      for (const w of words) {
-        if (lev(qn, w) <= 2) { ok = true; break; }
-      }
-      if (!ok && lev(qn, nn) <= 2) ok = true;
-    }
-    if (ok) out.push(mi);
-  }
-  return out;
+  return rows.filter(r => normalize(r.name).includes(qn));
 }
