@@ -17,6 +17,8 @@ const allowOrigin = (origin) => {
 };
 app.use(cors({ origin: (origin, cb) => cb(null, allowOrigin(origin)), credentials: true }));
 app.use(express.json());
+const clientDist = path.join(__dirname, "../../client/dist");
+app.use(express.static(clientDist));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api", router);
 
@@ -27,4 +29,10 @@ if (fs.existsSync(specPath)) {
   spec = JSON.parse(raw);
 }
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(spec));
+
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api")) return next();
+  res.sendFile(path.join(clientDist, "index.html"));
+});
+
 app.use(errorMiddleware);
