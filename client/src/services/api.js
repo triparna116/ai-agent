@@ -1,4 +1,4 @@
-const BASE = (import.meta.env && import.meta.env.VITE_API_URL) || "http://localhost:4002";
+const BASE = import.meta.env.PROD ? "" : "http://localhost:4002";
 
 export async function apiLogin(username, password) {
   const r = await fetch(`${BASE}/api/auth/login`, {
