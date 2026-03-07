@@ -31,8 +31,12 @@ export default function AdminPanel() {
     e.preventDefault();
     if (!token) { setStatus("Sign in first"); return; }
     if (!selectedId || !file) return;
+    setStatus("Uploading and analyzing image (this may take up to 20 seconds)...");
     dispatch(uploadImage({ token, id: selectedId, file })).unwrap()
-      .then(() => setStatus("Uploaded"))
+      .then(() => {
+        setStatus("Uploaded successfully! Extracted items below.");
+        dispatch(fetchMenu({ id: selectedId }));
+      })
       .catch((err) => setStatus(err.message || "Failed"));
   }
 
@@ -94,7 +98,7 @@ export default function AdminPanel() {
             <h3>Uploaded Images</h3>
             <div className="previews">
               {images.map((img, i) => (
-                <img key={i} src={img.url || img} alt={'uploaded-'+i} />
+                <img key={i} src={img.url || img} alt={'uploaded-' + i} />
               ))}
             </div>
           </div>

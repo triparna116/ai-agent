@@ -26,16 +26,16 @@ export async function uploadAndOcr(req, res) {
     const id = Number(req.params.id);
     const r = findRestaurantById(id);
     if (!r) {
-      if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
+      if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch { }
       return res.status(404).json({ error: "not_found" });
     }
     const f = req.file;
     if (!f) return res.status(400).json({ error: "image_required" });
     if (!ALLOWED_MIME.has(f.mimetype)) {
-      try { fs.unlinkSync(f.path); } catch {}
+      try { fs.unlinkSync(f.path); } catch { }
       return res.status(415).json({ error: "unsupported_media_type", allowed: Array.from(ALLOWED_MIME) });
     }
-    const url = `http://localhost:${process.env.PORT || 4000}/uploads/${path.basename(f.path)}`;
+    const url = `/uploads/${path.basename(f.path)}`;
     await addImage(id, url);
     let text = "";
     try {
