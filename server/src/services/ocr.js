@@ -41,6 +41,7 @@ export async function recognizeImage(filePath) {
 
 export async function extractStructuredMenuFromImage(imagePath) {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+  console.log(`[GEMINI] Using API Key starting with: ${apiKey.substring(0, 6)}... (Total Length: ${apiKey.length})`);
 
   if (!apiKey.startsWith("AIza")) {
     console.log("[GEMINI] CRITICAL: Invalid API Key format.");

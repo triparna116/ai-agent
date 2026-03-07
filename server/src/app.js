@@ -19,7 +19,7 @@ app.use(cors({ origin: (origin, cb) => cb(null, allowOrigin(origin)), credential
 app.use(express.json());
 const clientDist = path.join(__dirname, "../../client/dist");
 app.use(express.static(clientDist));
-app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api", router);
 
 const specPath = path.join(__dirname, "swagger.json");
