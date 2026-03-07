@@ -107,7 +107,7 @@ export function parseMenuTextToItems(text) {
     if (line.length < 3) continue;
 
     // Look for price patterns like $34, ₹250, Rs. 100, 250/-
-    const priceMatch = line.match(/([₹$]|Rs\.?)\s?(\d+)|(\d+)\s?(/ -) / i);
+    const priceMatch = line.match(/([₹$]|Rs\.?)\s?(\d+)|(\d+)\s?(\/\-)/i);
     let name = line;
     let price = "—";
 
