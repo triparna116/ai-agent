@@ -14,65 +14,80 @@ export async function recognizeImage(path) {
 
 export async function extractStructuredMenuFromImage(imagePath) {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.log("[GEMINI] Missing API key - Vision disabled.");
+    return null;
+  }
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   try {
     const data = fs.readFileSync(imagePath);
+    const ext = imagePath.split('.').pop().toLowerCase();
+    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+
+    console.log(`[GEMINI] Sending image to Vision (${mimeType})...`);
+
     const imagePart = {
       inlineData: {
         data: data.toString("base64"),
-        mimeType: "image/jpeg",
+        mimeType: mimeType,
       },
     };
 
     const prompt = `
-      Look at this restaurant menu image. 
-      Extract ALL food and drink items in a professional list. 
-      For each item: 
-      - name: The full dish name
-      - price: The exact price with currency (e.g. ₹200 or $5)
-      - description: A short, simple 1-sentence description if the menu provides one, or a helpful guess based on the name.
+      You are a high-end restaurant menu digitizer. 
+      Analyze this image and extract every single food and beverage item.
+      For each item, return:
+      - name: The clean, corrected name of the dish.
+      - price: The price with currency (e.g. ₹150).
+      - description: A short, appetizing 1-sentence description.
       
-      IMPORTANT: Only return a clean JSON array. No markdown, no text.
-      Example: [{"name": "Pasta", "price": "$12", "description": "Creamy white sauce pasta"}]
+      IMPORTANT: Return ONLY a JSON array. If the image is not a menu, return [].
     `;
 
     const result = await model.generateContent([prompt, imagePart]);
     const response = await result.response;
     const text = response.text().replace(/```json|```/g, "").trim();
-    return JSON.parse(text);
+
+    const items = JSON.parse(text);
+    console.log(`[GEMINI] Vision success! Extracted ${items.length} items.`);
+    return items;
   } catch (error) {
-    console.error("Gemini Vision Error:", error);
+    console.error("[GEMINI] Vision Error:", error.message);
     return null;
   }
 }
 
-export async function extractStructuredMenuWithLLM(rawText, imagePath = null) {
-  // Always try Vision if possible
+export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "") {
+  // 1. Try Vision FIRST (Directly reading the image is much better than reading OCR text)
   if (imagePath) {
-    const results = await extractStructuredMenuFromImage(imagePath);
-    if (results && Array.isArray(results) && results.length > 0) {
-      return results;
+    const visionResults = await extractStructuredMenuFromImage(imagePath);
+    if (visionResults && Array.isArray(visionResults) && visionResults.length > 0) {
+      return visionResults;
     }
+    console.log("[GEMINI] Vision gave no results, trying text-based extraction...");
   }
 
+  // 2. Fallback to Text-based LLM (if we have OCR text)
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
+  if (!apiKey || !rawText) {
+    console.log("[GEMINI] Simple fallback parser active (No Key or Text).");
+    return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "Automatic extraction" }));
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
   try {
-    const prompt = `Extract dish name, price, description from this OCR text: ${rawText}. Return only JSON.`;
+    console.log("[GEMINI] Sending OCR text to Gemini...");
+    const prompt = `Convert this messy OCR into a clean JSON menu: ${rawText}`;
     const result = await model.generateContent(prompt);
     const text = result.response.text().replace(/```json|```/g, "").trim();
     return JSON.parse(text);
-  } catch {
-    return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "" }));
+  } catch (err) {
+    console.error("[GEMINI] Text Fallback Error:", err.message);
+    return parseMenuTextToItems(rawText).map(name => ({ name, price: "", description: "Fallback" }));
   }
 }
 
