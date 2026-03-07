@@ -29,15 +29,22 @@ export default function AdminPanel() {
 
   function onUpload(e) {
     e.preventDefault();
+    console.log("[DEBUG] onUpload clicked", { selectedId, file: file?.name });
+
     if (!token) { setStatus("Sign in first"); return; }
-    if (!selectedId || !file) return;
+    if (!selectedId) { setStatus("Error: Please select a restaurant first!"); return; }
+    if (!file) { setStatus("Error: Please choose a file first!"); return; }
+
     setStatus("Uploading and analyzing image (this may take up to 20 seconds)...");
     dispatch(uploadImage({ token, id: selectedId, file })).unwrap()
       .then(() => {
         setStatus("Uploaded successfully! Extracted items below.");
         dispatch(fetchMenu({ id: selectedId }));
       })
-      .catch((err) => setStatus(err.message || "Failed"));
+      .catch((err) => {
+        console.error("[UPLOAD ERROR]", err);
+        setStatus(`Upload Failed: ${err.message || 'Server Error'}`);
+      });
   }
 
   function onEdit(id) {
