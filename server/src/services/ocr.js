@@ -4,10 +4,13 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export async function recognizeImage(path) {
   const result = await Tesseract.recognize(path, "eng", {
     logger: () => { },
-    tessedit_char_whitelist: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -'&().",
+    tessedit_char_whitelist: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -'&().₹$",
     psm: 6,
     preserve_interword_spaces: "1",
   });
+  console.log("--- RAW OCR DATA START ---");
+  console.log(result.data.text);
+  console.log("--- RAW OCR DATA END ---");
   return result.data.text || "";
 }
 
