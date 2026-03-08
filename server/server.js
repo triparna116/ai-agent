@@ -21,7 +21,7 @@ const allowedOrigins = [process.env.FRONTEND_URL, "http://localhost:5173"].filte
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use("/uploads", express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), "uploads")));
-const clientDist = path.join(__dirname, "../client/dist");
+const clientDist = path.join(__dirname, "client/dist");
 app.use(express.static(clientDist));
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
