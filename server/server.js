@@ -4,6 +4,7 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 import Tesseract from "tesseract.js";
+import { recognizeImage, extractStructuredMenuWithLLM } from "./src/services/ocr.js";
 import { fileURLToPath } from "url";
 import { Low } from "lowdb";
 import { JSONFile } from "lowdb/node";
@@ -21,7 +22,7 @@ const allowedOrigins = [process.env.FRONTEND_URL, "http://localhost:5173"].filte
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use("/uploads", express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), "uploads")));
-const clientDist = path.join(__dirname, "client/dist");
+const clientDist = path.resolve(__dirname, "..", "client", "dist");
 app.use(express.static(clientDist));
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -139,36 +140,26 @@ app.post("/api/restaurants/:id/upload", auth, upload.single("image"), async (req
       try { fs.unlinkSync(f.path); } catch { }
       return res.status(415).json({ error: "unsupported_media_type", allowed: Array.from(ALLOWED_MIME) });
     }
-    const url = `http://localhost:${PORT}/uploads/${path.basename(f.path)}`;
+    const url = `/uploads/${path.basename(f.path)}`;
     r.images = r.images || [];
     r.images.push({ url });
-    let text = "";
-    try {
-      const result = await Tesseract.recognize(f.path, "eng", {
-        logger: () => { },
-        tessedit_char_whitelist: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -'&().",
-        psm: 6,
-        preserve_interword_spaces: "1",
-      });
-      text = result.data.text || "";
-    } catch {
-      try { fs.unlinkSync(f.path); } catch { }
-      return res.status(422).json({ error: "ocr_failed" });
-    } finally {
-      try { fs.unlinkSync(f.path); } catch { }
-    }
-    const items = parseMenuTextToItems(text);
+    
+    const ocrData = await recognizeImage(f.path);
+    const { items, guardrail, source } = await extractStructuredMenuWithLLM(f.path, ocrData);
+    
     const existingNames = new Set(
       db.data.menu_items.filter((mi) => mi.restaurant_id === id).map((mi) => mi.name.toLowerCase())
     );
     let inserted = 0;
-    for (const name of items) {
-      if (!existingNames.has(name.toLowerCase())) {
+    for (const item of items) {
+      if (!existingNames.has(item.name.toLowerCase())) {
         db.data.menu_items.push({
           id: Date.now() + Math.random(),
           restaurant_id: id,
-          name,
-          raw_text: text,
+          name: item.name,
+          price: item.price || "",
+          description: item.description || "",
+          raw_text: ocrData.text,
         });
         inserted++;
       }
@@ -178,8 +169,9 @@ app.post("/api/restaurants/:id/upload", auth, upload.single("image"), async (req
       imageUrl: url,
       added: inserted,
       extracted: items.length,
-      itemsPreview: items.slice(0, 50),
-      total: db.data.menu_items.filter((mi) => mi.restaurant_id === id).length
+      itemsPreview: items,
+      guardrail,
+      source
     });
   } catch {
     res.status(500).json({ error: "upload_failed" });

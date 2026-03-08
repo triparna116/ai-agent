@@ -23,7 +23,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-const clientDist = path.join(__dirname, "../client/dist");
+const clientDist = path.resolve(__dirname, "..", "..", "client", "dist");
 app.use(express.static(clientDist));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api", router);
