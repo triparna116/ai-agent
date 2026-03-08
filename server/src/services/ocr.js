@@ -58,10 +58,11 @@ export async function extractStructuredMenuFromImage(imagePath) {
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const configs = [
+    { model: "gemini-2.0-flash-lite", version: "v1beta" },
+    { model: "gemini-2.0-flash", version: "v1beta" },
     { model: "gemini-1.5-flash", version: "v1beta" },
     { model: "gemini-1.5-flash", version: "v1" },
-    { model: "gemini-1.5-pro", version: "v1beta" },
-    { model: "gemini-pro-vision", version: "v1beta" }
+    { model: "gemini-1.5-pro", version: "v1beta" }
   ];
 
   const data = fs.readFileSync(imagePath).toString("base64");
@@ -80,6 +81,8 @@ export async function extractStructuredMenuFromImage(imagePath) {
     Return ONLY a valid JSON array of objects. Do not include markdown formatting or extra text.
   `;
 
+  let lastError = "";
+
   for (const config of configs) {
     try {
       console.log(`[GEMINI] Attempting Vision: ${config.model} (${config.version})...`);
@@ -90,6 +93,7 @@ export async function extractStructuredMenuFromImage(imagePath) {
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (jsonMatch) return JSON.parse(jsonMatch[0]);
     } catch (err) {
+      lastError = err.message;
       console.log(`[GEMINI] ${config.model} Library Failure: ${err.message}`);
 
       try {
@@ -104,13 +108,24 @@ export async function extractStructuredMenuFromImage(imagePath) {
           const restText = restData.candidates?.[0]?.content?.parts?.[0]?.text;
           const restJsonMatch = restText?.match(/\[[\s\S]*\]/);
           if (restJsonMatch) return JSON.parse(restJsonMatch[0]);
+        } else {
+          const errData = await restRes.json().catch(() => ({}));
+          lastError = errData.error?.message || restRes.statusText;
         }
       } catch (e) { }
     }
   }
 
-  console.log("[GEMINI] Vision failed (library & rest). Running diagnostics...");
-  await listAvailableModels(apiKey);
+  console.log("[GEMINI] Vision failed. Running diagnostics...");
+  const available = await listAvailableModels(apiKey);
+  
+  if (lastError.includes("Quota") || lastError.includes("429")) {
+    return [{
+      name: "⚠️ AI Quota Exceeded",
+      price: "LIMIT",
+      description: `Your Gemini API Key has 0 quota or has reached its limit. Error: ${lastError.substring(0, 100)}`
+    }];
+  }
   return null;
 }
 
@@ -127,7 +142,7 @@ export async function runGuardrailAudit(imagePath, extractedItems, ocrData = nul
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const data = fs.readFileSync(imagePath).toString("base64");
     const ext = path.extname(imagePath).toLowerCase();
@@ -170,69 +185,105 @@ export async function runGuardrailAudit(imagePath, extractedItems, ocrData = nul
 
 export async function extractStructuredMenuWithLLM(imagePath = null, ocrData = null) {
   const rawText = ocrData?.text || "";
+  const apiKey = (process.env.GEMINI_API_KEY || "").trim();
   let items = [];
-  let guardrailResult = { score: 0, needsReview: true };
+  let guardrailResult = { score: 0, needsReview: true, reason: "Initializing..." };
+  let lastError = "";
 
   // 1. Multimodal Stage (Vision Transformer / Gemini Vision)
   if (imagePath && fs.existsSync(imagePath)) {
     console.log("[PIPELINE] Stage 1: Multimodal Vision extraction...");
-    const visionItems = await extractStructuredMenuFromImage(imagePath);
     
-    if (visionItems && visionItems.length > 0) {
-      items = visionItems;
-      // 2. Guardrail Inference (DoorDash "Routing Decision")
-      guardrailResult = await runGuardrailAudit(imagePath, items, ocrData);
+    // Inline the vision logic to capture errors/state better
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const configs = [
+      { model: "gemini-2.0-flash", version: "v1beta" },
+      { model: "gemini-2.0-flash-lite", version: "v1beta" },
+      { model: "gemini-2.5-flash", version: "v1beta" },
+      { model: "gemini-1.5-flash", version: "v1beta" }
+    ];
 
+    const data = fs.readFileSync(imagePath).toString("base64");
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+    const imagePart = { inlineData: { data, mimeType } };
+
+    const prompt = `
+      Analyze this restaurant menu and extract a JSON array of objects: 
+      { "name": string, "price": string, "description": string, "category": string }
+      Return ONLY valid JSON.
+    `;
+
+    let visionAttempted = false;
+    for (const config of configs) {
+      if (items.length > 0) break;
+      try {
+        visionAttempted = true;
+        console.log(`[PIPELINE] Trying Vision: ${config.model}...`);
+        const model = genAI.getGenerativeModel({ model: config.model }, { apiVersion: config.version });
+        const result = await model.generateContent([prompt, imagePart]);
+        const res = await result.response;
+        const text = res.text();
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          items = JSON.parse(jsonMatch[0]);
+          // If we got items, this vision run was a total success, clear last error
+          lastError = ""; 
+        }
+      } catch (err) {
+        lastError = err.message;
+        console.log(`[GEMINI] ${config.model} failed: ${err.message}`);
+      }
+    }
+    
+    if (items.length > 0) {
+      // 2. Guardrail Inference
+      guardrailResult = await runGuardrailAudit(imagePath, items, ocrData);
       if (!guardrailResult.needsReview && guardrailResult.score >= 8) {
-        console.log(`[PIPELINE] High confidence (${guardrailResult.score}). Automated deployment.`);
         return { items, guardrail: guardrailResult, source: "vision" };
       }
-      console.log(`[PIPELINE] Moderate confidence or failure predicted (${guardrailResult.score}). Escalating...`);
     }
   }
 
-  // 3. OCR + LLM Correction Stage (James Chen: "Correcting and Enhancing OCR Results")
-  const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (apiKey.startsWith("AIza") && rawText) {
+  // 3. OCR + LLM Correction Stage
+  if (apiKey.startsWith("AIza") && rawText && items.length === 0) {
     try {
       console.log("[PIPELINE] Stage 2: OCR + LLM Hybrid Correction...");
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `
-        You are an AI assistant specialized in correcting OCR for restaurant menus.
-        Task: Review the following OCR text and extracted items. Correct misspellings, mislinked prices, and layout errors.
-        
-        OCR Text: ${rawText}
-        Existing Extraction: ${JSON.stringify(items)}
-        
-        Return the final structured menu as a JSON array (name, price, description, category).
-      `;
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const prompt = `Correct this OCR text into a JSON menu: ${rawText}`;
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const hybridItems = JSON.parse(jsonMatch[0]);
-        if (hybridItems.length > 0) {
-          items = hybridItems;
-          // Re-audit the corrected items
-          const secondAudit = await runGuardrailAudit(imagePath, items, ocrData);
-          return { items, guardrail: secondAudit, source: "ocr_llm_corrected" };
-        }
-      }
+      if (jsonMatch) items = JSON.parse(jsonMatch[0]);
     } catch (e) {
+      lastError = e.message;
       console.error("[HYBRID ERROR]", e.message);
     }
   }
 
-  // Final fallback to heuristic parser
+  // Final fallback to heuristic parser if AI failed
   if (items.length === 0) {
     items = parseMenuTextToItems(rawText);
+  } else {
+    // Post-process AI items to ensure they have all fields
+    items = items.map(it => ({
+      name: it.name || "Unknown Item",
+      price: it.price || "—",
+      description: it.description && it.description.length > 5 ? it.description : parseMenuTextToItems(it.name || "")[0]?.description || "Delicious dish."
+    }));
   }
+
+  const isQuotaError = lastError.includes("Quota") || lastError.includes("429");
 
   return {
     items,
-    guardrail: guardrailResult || { score: 3, needsReview: true, reason: "Heuristic fallback" },
-    source: items.length > 0 ? "heuristic" : "failed"
+    guardrail: guardrailResult.score > 0 ? guardrailResult : { 
+      score: isQuotaError ? 0 : 3, 
+      needsReview: true, 
+      reason: isQuotaError ? "AI Quota Limit reached (0/0). Please use a NEW API Key." : "Heuristic fallback" 
+    },
+    source: isQuotaError ? "quota_limit_error" : (items.length > 1 ? "ocr_llm_corrected" : "heuristic")
   };
 }
 
