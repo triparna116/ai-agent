@@ -1,0 +1,13 @@
+{
+  "name": "ai-menu-agent-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm install --prefix server && npm run build --prefix server",
+    "start": "npm start --prefix server",
+    "dev": "npm run dev --prefix server"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
