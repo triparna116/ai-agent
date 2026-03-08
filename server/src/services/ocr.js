@@ -71,12 +71,19 @@ export async function extractStructuredMenuFromImage(imagePath) {
   const imagePart = { inlineData: { data, mimeType } };
 
   const prompt = `
+    You are a specialized Multimodal Menu Transcription AI (DoorDash Vision Model candidate).
     Analyze this restaurant menu image and extract a structured JSON list of dishes.
+    
+    [GUIDELINES]:
+    - Layout Interpretation: Menus may be multi-column or non-linear. Use visual cues to pair items with correct attributes.
+    - Quality Compensation: If lighting is dim or there is glare, use surrounding context to infer missing characters.
+    
     For each dish, include:
     - "name": The name of the dish.
     - "price": The exact price (e.g., "$10.00", "₹250").
     - "description": A short description based on visible details or standard menu context.
     - "category": The menu section it belongs to (e.g., "Appetizers", "Main Course").
+    - "location_hint": A brief string describing where it is (e.g., "Top Left", "Bottom Right").
 
     Return ONLY a valid JSON array of objects. Do not include markdown formatting or extra text.
   `;
@@ -154,22 +161,26 @@ export async function runGuardrailAudit(imagePath, extractedItems, ocrData = nul
 
     const auditPrompt = `
       Perform a 'Multi-view' Guardrail Audit as described by DoorDash Engineering.
-      Analyze the interaction between the Photo, OCR, and LLM output.
+      Your goal is to predict if this transcription will meet the high accuracy bar required for production.
 
-      [VIEW 1: Image-level Features]: Analyze the photo for quality, lighting, glare, and cropping.
-      [VIEW 2: OCR-derived Features]: 
-        - Raw OCR: ${ocrSnippet}
+      [VIEW 1: Image-level Features]: Check for failure modes like "Low photographic quality" (dark, blurry, glare).
+      [VIEW 2: OCR-derived Features]: Analyze the raw extraction for "junk text", "fragments", and scrambling:
+        - Raw OCR Snippet: ${ocrSnippet}
         - Tesseract Confidence: ${ocrConfidence}
-      [VIEW 3: LLM-output Features]: 
-        - Extracted Items: ${JSON.stringify(extractedItems.slice(0, 10))}
-        - Internal consistency of categories/prices.
+      [VIEW 3: LLM-output Features]: Evaluate the structured transcription for "Inconsistent menu structures" or "Incomplete menus":
+        - Extracted Items Sample: ${JSON.stringify(extractedItems.slice(0, 10))}
+
+      FAILURE MODE TAXONOMY:
+      - "Inconsistent Structure": OCR scrambled reading order (e.g. multi-column mixup).
+      - "Incomplete Menu": Cropped photos or attributes without parent items.
+      - "Low Quality": Dim lighting/glare making text unreadable.
 
       Return strictly JSON: 
       { 
         "score": (0-10), 
         "needsReview": boolean, 
-        "reason": "specific failure mode if any",
-        "features": { "imageQuality": "string", "ocrReliability": "string", "outputConsistency": "string" }
+        "reason": "Identify the primary failure mode if score < 7",
+        "features": { "imageQuality": "high/med/low", "ocrReliability": "high/med/low", "outputConsistency": "high/med/low" }
       }
     `;
 
@@ -209,56 +220,75 @@ export async function extractStructuredMenuWithLLM(imagePath = null, ocrData = n
     const imagePart = { inlineData: { data, mimeType } };
 
     const prompt = `
-      Analyze this restaurant menu and extract a JSON array of objects: 
-      { "name": string, "price": string, "description": string, "category": string }
+      You are a specialized Multimodal Menu Parser.
+      [JAMES CHEN TECHNIQUE]: Use the following OCR text as an additional context layer to improve your interpretation of the image:
+      "${rawText.substring(0, 500)}..."
+      
+      Extract a JSON array of objects: 
+      { "name": string, "price": string, "description": string, "category": string, "source_score": number }
+      Correct any spelling mistakes detected in the OCR using visual context from the image.
       Return ONLY valid JSON.
     `;
 
-    let visionAttempted = false;
+    let visionResult = { items: [], guardrail: null };
     for (const config of configs) {
-      if (items.length > 0) break;
+      if (visionResult.items.length > 0) break;
       try {
-        visionAttempted = true;
         console.log(`[PIPELINE] Trying Vision: ${config.model}...`);
         const model = genAI.getGenerativeModel({ model: config.model }, { apiVersion: config.version });
         const result = await model.generateContent([prompt, imagePart]);
-        const res = await result.response;
-        const text = res.text();
+        const text = (await result.response).text();
         const jsonMatch = text.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-          items = JSON.parse(jsonMatch[0]);
-          // If we got items, this vision run was a total success, clear last error
-          lastError = ""; 
+          visionResult.items = JSON.parse(jsonMatch[0]);
+          visionResult.guardrail = await runGuardrailAudit(imagePath, visionResult.items, ocrData);
         }
       } catch (err) {
         lastError = err.message;
-        console.log(`[GEMINI] ${config.model} failed: ${err.message}`);
       }
     }
     
-    if (items.length > 0) {
-      // 2. Guardrail Inference
-      guardrailResult = await runGuardrailAudit(imagePath, items, ocrData);
-      if (!guardrailResult.needsReview && guardrailResult.score >= 8) {
-        return { items, guardrail: guardrailResult, source: "vision" };
+    // If vision is "Excellent" (Score 9+), return immediately to save latency (DoorDash Efficiency)
+    if (visionResult.guardrail?.score >= 9) {
+      return { items: visionResult.items, guardrail: visionResult.guardrail, source: "vision" };
+    }
+
+    // 3. OCR + LLM Correction Stage (Candidate Model 2)
+    if (apiKey.startsWith("AIza") && rawText) {
+      try {
+        console.log("[PIPELINE] Stage 2: OCR + LLM Hybrid Correction...");
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const correctionPrompt = `
+          You are an AI assistant specialized in understanding images and correcting OCR (James Chen Technique).
+          Task: Review the following OCR text and extract a structured menu JSON.
+          OCR Text: ${rawText}
+          
+          Correct any errors from OCR and return a clean JSON array of objects:
+          { "name": string, "price": string, "description": string, "category": string }
+          Return ONLY valid JSON.
+        `;
+        const result = await model.generateContent(correctionPrompt);
+        const text = result.response.text();
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          const ocrItems = JSON.parse(jsonMatch[0]);
+          const ocrGuardrail = await runGuardrailAudit(imagePath, ocrItems, ocrData);
+          
+          // Arbitration: Pick the best one
+          if (!visionResult.guardrail || ocrGuardrail.score > visionResult.guardrail.score) {
+            console.log(`[PIPELINE] Arbitrator: OCR+LLM outperformed Vision (${ocrGuardrail.score} > ${visionResult.guardrail?.score || 0})`);
+            return { items: ocrItems, guardrail: ocrGuardrail, source: "ocr_llm_corrected" };
+          }
+        }
+      } catch (e) {
+        lastError = e.message;
       }
     }
-  }
-
-  // 3. OCR + LLM Correction Stage
-  if (apiKey.startsWith("AIza") && rawText && items.length === 0) {
-    try {
-      console.log("[PIPELINE] Stage 2: OCR + LLM Hybrid Correction...");
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-      const prompt = `Correct this OCR text into a JSON menu: ${rawText}`;
-      const result = await model.generateContent(prompt);
-      const text = result.response.text();
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) items = JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      lastError = e.message;
-      console.error("[HYBRID ERROR]", e.message);
+    
+    // Arbitration Successor: If we reached here without returning, pick the best Vision outcome
+    if (visionResult.items.length > 0) {
+      items = visionResult.items;
+      guardrailResult = visionResult.guardrail;
     }
   }
 
