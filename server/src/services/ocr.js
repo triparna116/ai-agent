@@ -111,12 +111,15 @@ export async function extractStructuredMenuFromImage(imagePath) {
 }
 
 /**
- * DOOR DASH CONCEPT: Guardrail Model
+ * DOOR DASH CONCEPT: Guardrail Model (Enhanced)
  * Verifies if the extracted menu items reasonably match the image context.
+ * Direct implementation of "Multi-view approach" (Image, OCR, LLM features).
  */
-export async function runGuardrailAudit(imagePath, extractedItems) {
+export async function runGuardrailAudit(imagePath, extractedItems, ocrRawText = "") {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey.startsWith("AIza") || !extractedItems || extractedItems.length === 0) return { score: 0, needsReview: true, reason: "AI not configured or no items extracted." };
+  if (!apiKey.startsWith("AIza") || !extractedItems || extractedItems.length === 0) {
+    return { score: 0, needsReview: true, reason: "AI not configured or no items extracted." };
+  }
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -128,12 +131,16 @@ export async function runGuardrailAudit(imagePath, extractedItems) {
     const imagePart = { inlineData: { data, mimeType } };
 
     const auditPrompt = `
-      Compare these extracted menu items with the provided menu image:
-      ${JSON.stringify(extractedItems.slice(0, 10))}
+      Perform a 'Multi-view' Guardrail Audit on this restaurant menu extraction.
       
-      Rate the extraction accuracy from 0 to 10.
-      Identify if there are major hallucinations or missing categories.
-      Return JSON: { "score": number, "needsReview": boolean, "reason": "string" }
+      [1. Image-level Analysis]: check for blur, glare, lighting, or cropping issues.
+      [2. OCR Verification]: Evaluate the raw text quality: ${ocrRawText.substring(0, 1000)}
+      [3. Consistency Check]: Do these items make sense as a coherent menu?
+      Extracted Items: ${JSON.stringify(extractedItems.slice(0, 15))}
+      
+      Rate accuracy from 0 to 10.
+      Predict if human review is needed based on these features.
+      Return strictly JSON: { "score": number, "needsReview": boolean, "reason": "string" }
     `;
 
     const result = await model.generateContent([auditPrompt, imagePart]);
@@ -156,7 +163,7 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
     if (visionItems && visionItems.length > 0) {
       items = visionItems;
       // 2. Run Guardrail (DoorDash quality check)
-      guardrailResult = await runGuardrailAudit(imagePath, items);
+      guardrailResult = await runGuardrailAudit(imagePath, items, rawText);
 
       if (!guardrailResult.needsReview && guardrailResult.score >= 8) {
         return { items, guardrail: guardrailResult, source: "vision" };
@@ -164,14 +171,19 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
     }
   }
 
-  // 3. Fallback to OCR + LLM (Stable baseline)
+  // 3. Fallback to OCR + LLM (James Chen Enhancement: "Correcting and Enhancing OCR Results")
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
   if (apiKey.startsWith("AIza") && rawText) {
     try {
-      console.log("[HYBRID] Vision unsatisfactory. Falling back to OCR + LLM...");
+      console.log("[HYBRID] Vision unsatisfactory. Falling back to OCR + LLM Correction...");
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `Extract structured menu JSON (name, price, description, category) from this OCR text: ${rawText}`;
+      const prompt = `
+        You are an AI assistant specialized in understanding menu images and correcting OCR.
+        Task: Review the following OCR text and extract a structured menu JSON (name, price, description, category).
+        IMPORTANT: Correct common OCR artifacts, spelling errors, and layout misinterpretations based on context.
+        OCR Text: ${rawText}
+      `;
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       const jsonMatch = text.match(/\[[\s\S]*\]/);
@@ -179,7 +191,7 @@ export async function extractStructuredMenuWithLLM(imagePath = null, rawText = "
         const llmItems = JSON.parse(jsonMatch[0]);
         // Simple comparative guardrail for LLM fallback
         if (llmItems.length > items.length || items.length === 0) {
-          return { items: llmItems, guardrail: { score: 7, needsReview: true }, source: "ocr_llm" };
+          return { items: llmItems, guardrail: { score: 7, needsReview: true, reason: "OCR Correction applied" }, source: "ocr_llm_corrected" };
         }
       }
     } catch (e) { }

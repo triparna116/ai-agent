@@ -11,11 +11,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const app = express();
-const allowOrigin = (origin) => {
-  if (!origin) return true;
-  return /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
-};
-app.use(cors({ origin: (origin, cb) => cb(null, allowOrigin(origin)), credentials: true }));
+const allowedOrigins = [process.env.FRONTEND_URL, "http://localhost:5173", "http://localhost:5174"].filter(Boolean);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin) || /^http:\/\/localhost:\d+$/.test(origin)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true
+}));
 app.use(express.json());
 const clientDist = path.join(__dirname, "../../client/dist");
 app.use(express.static(clientDist));
