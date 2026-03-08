@@ -23,7 +23,10 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-const clientDist = path.resolve(__dirname, "..", "..", "client", "dist");
+const clientDist = path.resolve(__dirname, "..", "dist");
+console.log(`[SERVER] Static files path: ${clientDist}`);
+console.log(`[SERVER] Index exists: ${fs.existsSync(path.join(clientDist, "index.html"))}`);
+
 app.use(express.static(clientDist));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/api", router);
